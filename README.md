@@ -1,9 +1,9 @@
-[README.md](https://github.com/user-attachments/files/31579664/README.md)
-# mikan_qemu
-一个简单用python写的qemu管理器
+
 # 🍊 Mikan QEMU：跨平台虚拟机管理利器
 
 **Mikan QEMU** 是一款轻量级、开箱即用的 QEMU 虚拟机管理工具。项目由两个核心 Python 文件构成，旨在提供类似 VMware 的直观图形界面体验，同时具备强大的底层参数生成与多架构兼容能力。无论是进行跨平台开发、系统测试还是架构研究，Mikan QEMU 都能为你提供流畅的虚拟化体验。
+
+> 本项目基于 GPT-3.0 生成。
 
 ---
 
@@ -158,6 +158,7 @@ Mikan-QEMU/
 | **打包格式** | ZIP |
 | **进程管理** | QProcess (Qt) |
 | **多线程** | QThread / threading |
+| **AI 辅助生成** | GPT-3.0 |
 
 ---
 
@@ -233,3 +234,4 @@ pip install PySide6 psutil
 - [QEMU](https://www.qemu.org/) — 强大的开源机器模拟与虚拟化技术
 - [PySide6](https://www.qt.io/qt-for-python) — Qt6 的 Python 绑定
 - [psutil](https://github.com/giampaolo/psutil) — 跨平台进程和系统监控工具
+- [GPT-3.0](https://openai.com) — AI 辅助代码生成
