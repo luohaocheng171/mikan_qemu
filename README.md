@@ -225,7 +225,7 @@ pip install PySide6 psutil
 
 ## 📄 许可证
 
-本项目基于 [MIT License](LICENSE) 开源，详情请参阅 LICENSE 文件。
+本项目基于 GPL v3.0开源，详情请参阅 LICENSE 文件。
 
 ---
 
