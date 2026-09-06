@@ -2,14 +2,14 @@
 # -*- coding: utf-8 -*-
 
 """
-Mikan QEMU Manager v5.0 - VMware风格UI
-完整功能版 - 保留全部功能，只改UI布局
+Mikan QEMU Manager v5.2 - VMware风格UI
+完整功能版 + 硬件配置管理 + 网络模式
 """
 
 import os
 import sys
 import subprocess
-import importlib  # 修复：提前导入 importlib
+import importlib
 import json
 import shutil
 import zipfile
@@ -72,7 +72,6 @@ def check_and_install_dependencies():
                 print(f"   请手动安装: pip install {package}")
                 return False
         
-        # 验证安装
         print("\n" + "=" * 60)
         print("🔍 验证依赖安装...")
         print("=" * 60)
@@ -91,7 +90,6 @@ def check_and_install_dependencies():
     print("=" * 60)
     return True
 
-# 运行依赖检查
 if not check_and_install_dependencies():
     print("\n⚠️ 依赖安装失败，请手动安装后重新运行")
     print("   pip install PySide6 psutil")
@@ -115,11 +113,12 @@ except ImportError:
 # 修复 Windows 编码问题
 # ============================================================
 if sys.platform == "win32":
-    try:
-        sys.stdout.reconfigure(encoding='utf-8', errors='ignore')
-        sys.stderr.reconfigure(encoding='utf-8', errors='ignore')
-    except:
-        pass
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8', errors='ignore')
+            sys.stderr.reconfigure(encoding='utf-8', errors='ignore')
+        except:
+            pass
     os.environ['PYTHONIOENCODING'] = 'utf-8'
 
 def is_admin():
@@ -136,15 +135,900 @@ SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 EXPORT_DIR = BASE_DIR / "exports"
 CONFIG_DIR = BASE_DIR / "config"
 SHARE_DIR = BASE_DIR / "share"
+HARDWARE_PROFILES_DIR = BASE_DIR / "hardware_profiles"
+CUSTOM_HARDWARE_DIR = HARDWARE_PROFILES_DIR / "custom"
 
-for d in [VMS_DIR, ISO_DIR, SNAPSHOTS_DIR, EXPORT_DIR, CONFIG_DIR, SHARE_DIR]:
+for d in [VMS_DIR, ISO_DIR, SNAPSHOTS_DIR, EXPORT_DIR, CONFIG_DIR, SHARE_DIR, HARDWARE_PROFILES_DIR, CUSTOM_HARDWARE_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
-APP_VERSION = "5.0"
-CONFIG_VERSION = "5.0"
+APP_VERSION = "5.2"
+CONFIG_VERSION = "5.2"
 
 # ============================================================
-# QEMU 硬件检测（修复版 - 独立try-except + 20秒超时）
+# 硬件配置预设数据（内置）
+# ============================================================
+BUILTIN_HARDWARE_PROFILES = {
+    "retro_2011": {
+        "year": 2011,
+        "cpu_model": "Nehalem",
+        "cpu_flags": "+aes,+avx",
+        "vga": "cirrus",
+        "sound": "sb16",
+        "nic": "rtl8139",
+        "disk_interface": "ide",
+        "machine": "pc",
+        "accel": "tcg",
+        "display": "gtk",
+        "usb_controller": "piix3-usb-uhci",
+        "description": "2011年复古硬件配置 (XP/98)"
+    },
+    "retro_2013": {
+        "year": 2013,
+        "cpu_model": "SandyBridge",
+        "cpu_flags": "+aes,+avx,+rdrand,+f16c",
+        "vga": "std",
+        "sound": "ac97",
+        "nic": "e1000",
+        "disk_interface": "ide",
+        "machine": "pc",
+        "accel": "tcg",
+        "display": "gtk",
+        "usb_controller": "usb-ehci",
+        "description": "2013年硬件配置 (Win7)"
+    },
+    "transition_2016": {
+        "year": 2016,
+        "cpu_model": "Skylake-Client",
+        "cpu_flags": "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves",
+        "vga": "std",
+        "sound": "ac97",
+        "nic": "e1000",
+        "disk_interface": "sata",
+        "machine": "pc",
+        "accel": "tcg",
+        "display": "gtk",
+        "usb_controller": "usb-ehci",
+        "description": "2016年过渡配置 (Win7/8.1)"
+    },
+    "modern_2019": {
+        "year": 2019,
+        "cpu_model": "CascadeLake",
+        "cpu_flags": "+aes,+avx,+avx2,+avx512f,+avx512bw,+avx512cd,+avx512dq,+avx512vl,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves",
+        "vga": "virtio",
+        "sound": "hda",
+        "nic": "virtio",
+        "disk_interface": "virtio",
+        "machine": "q35",
+        "accel": "hax",
+        "display": "gtk",
+        "usb_controller": "usb-ehci",
+        "description": "2019年现代配置 (Win10)"
+    },
+    "latest_2024": {
+        "year": 2024,
+        "cpu_model": "host",
+        "cpu_flags": "+aes,+avx,+avx2,+avx512f,+avx512bw,+avx512cd,+avx512dq,+avx512vl,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves",
+        "vga": "virtio",
+        "sound": "hda",
+        "nic": "virtio",
+        "disk_interface": "virtio",
+        "machine": "q35",
+        "accel": "hax",
+        "display": "gtk",
+        "usb_controller": "usb-xhci",
+        "description": "2024年最新配置 (Win10/11)"
+    },
+    "epyc_2023": {
+        "year": 2023,
+        "cpu_model": "EPYC",
+        "cpu_flags": "+aes,+avx,+avx2,+avx512f,+avx512bw,+avx512cd,+avx512dq,+avx512vl,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves",
+        "vga": "virtio",
+        "sound": "hda",
+        "nic": "virtio",
+        "disk_interface": "virtio",
+        "machine": "q35",
+        "accel": "hax",
+        "display": "gtk",
+        "usb_controller": "usb-xhci",
+        "description": "AMD EPYC 服务器配置"
+    },
+    "minimal": {
+        "year": 2020,
+        "cpu_model": "qemu64",
+        "cpu_flags": "",
+        "vga": "none",
+        "sound": "none",
+        "nic": "e1000",
+        "disk_interface": "ide",
+        "machine": "pc",
+        "accel": "tcg",
+        "display": "none",
+        "usb_controller": "none",
+        "description": "最小化配置 (无图形/声音)"
+    },
+    "macos": {
+        "year": 2020,
+        "cpu_model": "host",
+        "cpu_flags": "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves",
+        "vga": "vmvga",
+        "sound": "hda",
+        "nic": "e1000",
+        "disk_interface": "sata",
+        "machine": "q35",
+        "accel": "hvf",
+        "display": "gtk",
+        "usb_controller": "usb-xhci",
+        "description": "macOS 专用配置 (需要 HVF)"
+    },
+    "android": {
+        "year": 2019,
+        "cpu_model": "qemu64",
+        "cpu_flags": "+aes,+avx,+rdrand",
+        "vga": "std",
+        "sound": "none",
+        "nic": "e1000",
+        "disk_interface": "ide",
+        "machine": "pc",
+        "accel": "tcg",
+        "display": "gtk",
+        "usb_controller": "usb-ehci",
+        "description": "Android x86 专用配置"
+    },
+    "linux_server": {
+        "year": 2020,
+        "cpu_model": "host",
+        "cpu_flags": "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves",
+        "vga": "none",
+        "sound": "none",
+        "nic": "virtio",
+        "disk_interface": "virtio",
+        "machine": "q35",
+        "accel": "kvm",
+        "display": "none",
+        "usb_controller": "none",
+        "description": "Linux 服务器 (无图形界面)"
+    },
+}
+
+
+class HardwareProfileManager:
+    """硬件配置文件管理器 - 管理完整的硬件配置预设"""
+    
+    def __init__(self):
+        self.profiles = {}
+        self._ensure_dirs()
+        self.load_all()
+    
+    def _ensure_dirs(self):
+        HARDWARE_PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+        CUSTOM_HARDWARE_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def load_all(self):
+        """加载所有硬件配置（内置 + 自定义 JSON）"""
+        self.profiles = {}
+        
+        # 1. 加载内置
+        for name, data in BUILTIN_HARDWARE_PROFILES.items():
+            self.profiles[name] = {
+                "name": name,
+                "is_builtin": True,
+                **data
+            }
+        
+        # 2. 扫描自定义目录
+        for json_file in CUSTOM_HARDWARE_DIR.glob("*.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    name = data.get("name", json_file.stem)
+                    if name in self.profiles and self.profiles[name].get("is_builtin", False):
+                        print(f"⚠️ 自定义硬件配置 '{name}' 与内置冲突，已跳过")
+                        continue
+                    self.profiles[name] = {
+                        "name": name,
+                        "is_builtin": False,
+                        "file_path": str(json_file),
+                        **data
+                    }
+            except Exception as e:
+                print(f"⚠️ 加载自定义硬件配置失败 {json_file}: {e}")
+    
+    def get_all_names(self) -> List[str]:
+        """获取所有配置名称"""
+        builtin = [n for n, d in self.profiles.items() if d.get("is_builtin", False)]
+        custom = [n for n, d in self.profiles.items() if not d.get("is_builtin", False)]
+        builtin.sort(key=lambda n: self.profiles[n].get("year", 0))
+        custom.sort(key=lambda n: self.profiles[n].get("year", 0))
+        return builtin + custom
+    
+    def get_profile(self, name: str) -> Optional[Dict]:
+        return self.profiles.get(name)
+    
+    def is_builtin(self, name: str) -> bool:
+        profile = self.get_profile(name)
+        return profile is not None and profile.get("is_builtin", False)
+    
+    def create_profile(self, name: str, data: Dict) -> bool:
+        """创建自定义硬件配置"""
+        if not name or name in self.profiles:
+            return False
+        
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        data["name"] = name
+        file_path = CUSTOM_HARDWARE_DIR / f"{safe_name}.json"
+        
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            self.profiles[name] = {
+                "name": name,
+                "is_builtin": False,
+                "file_path": str(file_path),
+                **data
+            }
+            return True
+        except Exception as e:
+            print(f"❌ 保存自定义硬件配置失败: {e}")
+            return False
+    
+    def update_profile(self, name: str, data: Dict) -> bool:
+        """更新自定义硬件配置"""
+        if name not in self.profiles or self.profiles[name].get("is_builtin", False):
+            return False
+        
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        data["name"] = name
+        file_path = CUSTOM_HARDWARE_DIR / f"{safe_name}.json"
+        
+        try:
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            self.profiles[name].update(data)
+            return True
+        except Exception as e:
+            print(f"❌ 更新自定义硬件配置失败: {e}")
+            return False
+    
+    def delete_profile(self, name: str) -> bool:
+        """删除自定义硬件配置"""
+        if name not in self.profiles or self.profiles[name].get("is_builtin", False):
+            return False
+        
+        safe_name = re.sub(r'[<>:"/\\|?*]', '_', name)
+        file_path = CUSTOM_HARDWARE_DIR / f"{safe_name}.json"
+        
+        try:
+            if file_path.exists():
+                file_path.unlink()
+            del self.profiles[name]
+            return True
+        except Exception as e:
+            print(f"❌ 删除自定义硬件配置失败: {e}")
+            return False
+    
+    def apply_to_vm(self, profile_name: str, vm):
+        """将硬件配置应用到虚拟机"""
+        profile = self.get_profile(profile_name)
+        if not profile:
+            return
+        
+        field_mapping = {
+            "cpu_model": "cpu_model",
+            "cpu_flags": "cpu_flags",
+            "vga": "vga",
+            "sound": "sound",
+            "nic": "nic_model",
+            "disk_interface": "disk_interface",
+            "machine": "machine_type",
+            "accel": "accel",
+            "display": "display",
+            "usb_controller": "custom_usb_controller",
+        }
+        
+        for src, dst in field_mapping.items():
+            if src in profile and profile[src] is not None:
+                setattr(vm, dst, profile[src])
+        
+        if "cpu_flags" in profile and profile["cpu_flags"]:
+            vm.cpu_flags = profile["cpu_flags"]
+        
+        if profile.get("vga") == "none":
+            vm.opengl = False
+        
+        if profile.get("display") == "none":
+            vm.display = "none"
+
+
+# ============================================================
+# ===== 强制CPU型号列表（最高优先级，永久保留） =====
+# ============================================================
+FORCE_CPU_MODELS = [
+    "host",
+    "qemu64",
+    "qemu32",
+    "core2duo",
+    "phenom",
+    "Opteron_G1",
+    "Opteron_G2",
+    "Opteron_G3",
+    "Opteron_G4",
+    "Opteron_G5",
+    "EPYC",
+    "EPYC-Rome",
+    "EPYC-Milan",
+    "EPYC-Genoa",
+    "Skylake-Client",
+    "Skylake-Server",
+    "CascadeLake",
+    "Cooperlake",
+    "Icelake-Client",
+    "Icelake-Server",
+    "SapphireRapids",
+    "GraniteRapids",
+    "Nehalem",
+    "Nehalem-IBRS",
+    "Westmere",
+    "Westmere-IBRS",
+    "SandyBridge",
+    "SandyBridge-IBRS",
+    "Haswell",
+    "Haswell-IBRS",
+    "Haswell-noTSX",
+    "Haswell-noTSX-IBRS",
+    "Broadwell",
+    "Broadwell-IBRS",
+    "Broadwell-noTSX",
+    "Broadwell-noTSX-IBRS",
+    "Denverton",
+    "Snowridge",
+    "Penryn",
+    "Conroe",
+    "n270",
+    "atom",
+    "max",
+]
+
+# ============================================================
+# 硬件配置编辑对话框
+# ============================================================
+class HardwareProfileEditDialog(QDialog):
+    """创建/编辑硬件配置对话框"""
+    
+    def __init__(self, parent=None, profile_name: str = None, manager: HardwareProfileManager = None):
+        super().__init__(parent)
+        self.manager = manager or HardwareProfileManager()
+        self.profile_name = profile_name
+        self.is_edit = profile_name is not None
+        
+        self.init_ui()
+        
+        if self.is_edit:
+            self.setWindowTitle(f"✏️ 编辑硬件配置: {profile_name}")
+            data = self.manager.get_profile(profile_name)
+            if data:
+                self.load_data(data)
+            else:
+                self.reject()
+        else:
+            self.setWindowTitle("📦 新建硬件配置")
+    
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 16, 16, 16)
+        
+        tabs = QTabWidget()
+        
+        # 基本信息 Tab
+        basic_tab = QWidget()
+        basic_layout = QGridLayout(basic_tab)
+        basic_layout.setVerticalSpacing(8)
+        basic_layout.setHorizontalSpacing(12)
+        
+        row = 0
+        basic_layout.addWidget(QLabel("配置名称:"), row, 0)
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("例如: my_gaming_config")
+        basic_layout.addWidget(self.name_edit, row, 1)
+        
+        row += 1
+        basic_layout.addWidget(QLabel("年份标签:"), row, 0)
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(2011, 2030)
+        self.year_spin.setValue(2024)
+        basic_layout.addWidget(self.year_spin, row, 1)
+        
+        row += 1
+        basic_layout.addWidget(QLabel("描述:"), row, 0)
+        self.desc_edit = QLineEdit()
+        self.desc_edit.setPlaceholderText("描述这个硬件配置的特点")
+        basic_layout.addWidget(self.desc_edit, row, 1)
+        
+        basic_layout.setRowStretch(row + 1, 1)
+        tabs.addTab(basic_tab, "📋 基本信息")
+        
+        # CPU Tab - 使用 FORCE_CPU_MODELS
+        cpu_tab = QWidget()
+        cpu_layout = QGridLayout(cpu_tab)
+        cpu_layout.setVerticalSpacing(8)
+        cpu_layout.setHorizontalSpacing(12)
+        
+        row = 0
+        cpu_layout.addWidget(QLabel("CPU 型号:"), row, 0)
+        self.cpu_model_combo = QComboBox()
+        self.cpu_model_combo.addItems(FORCE_CPU_MODELS)
+        self.cpu_model_combo.setEditable(True)
+        cpu_layout.addWidget(self.cpu_model_combo, row, 1)
+        
+        row += 1
+        cpu_layout.addWidget(QLabel("指令集标志:"), row, 0)
+        self.cpu_flags_edit = QLineEdit()
+        self.cpu_flags_edit.setPlaceholderText("+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni")
+        cpu_layout.addWidget(self.cpu_flags_edit, row, 1)
+        
+        cpu_layout.setRowStretch(row + 1, 1)
+        tabs.addTab(cpu_tab, "🖥️ CPU")
+        
+        # 显卡/显示 Tab
+        gpu_tab = QWidget()
+        gpu_layout = QGridLayout(gpu_tab)
+        gpu_layout.setVerticalSpacing(8)
+        gpu_layout.setHorizontalSpacing(12)
+        
+        row = 0
+        gpu_layout.addWidget(QLabel("显卡型号:"), row, 0)
+        self.vga_combo = QComboBox()
+        self.vga_combo.addItems(["virtio", "std", "cirrus", "vmvga", "qxl", "none", "bochs", "ramfb", "sga"])
+        self.vga_combo.setEditable(True)
+        gpu_layout.addWidget(self.vga_combo, row, 1)
+        
+        row += 1
+        gpu_layout.addWidget(QLabel("显示后端:"), row, 0)
+        self.display_combo = QComboBox()
+        self.display_combo.addItems(["gtk", "sdl", "none", "curses", "spice", "egl-headless"])
+        self.display_combo.setEditable(True)
+        gpu_layout.addWidget(self.display_combo, row, 1)
+        
+        gpu_layout.setRowStretch(row + 1, 1)
+        tabs.addTab(gpu_tab, "🖥️ 显卡/显示")
+        
+        # 声音/网络 Tab
+        audio_net_tab = QWidget()
+        audio_net_layout = QGridLayout(audio_net_tab)
+        audio_net_layout.setVerticalSpacing(8)
+        audio_net_layout.setHorizontalSpacing(12)
+        
+        row = 0
+        audio_net_layout.addWidget(QLabel("声卡型号:"), row, 0)
+        self.sound_combo = QComboBox()
+        self.sound_combo.addItems(["hda", "ac97", "sb16", "ich9-intel-hda", "none", "cs4231a", "gus", "intel-hda", "isa", "pcspk", "pl041"])
+        self.sound_combo.setEditable(True)
+        audio_net_layout.addWidget(self.sound_combo, row, 1)
+        
+        row += 1
+        audio_net_layout.addWidget(QLabel("网卡型号:"), row, 0)
+        self.nic_combo = QComboBox()
+        self.nic_combo.addItems(["virtio", "e1000", "rtl8139", "pcnet", "e1000e", "vmxnet3", "usb-net", "ne2k_pci"])
+        self.nic_combo.setEditable(True)
+        audio_net_layout.addWidget(self.nic_combo, row, 1)
+        
+        audio_net_layout.setRowStretch(row + 1, 1)
+        tabs.addTab(audio_net_tab, "🔊 声音/网络")
+        
+        # 主板/存储 Tab
+        board_tab = QWidget()
+        board_layout = QGridLayout(board_tab)
+        board_layout.setVerticalSpacing(8)
+        board_layout.setHorizontalSpacing(12)
+        
+        row = 0
+        board_layout.addWidget(QLabel("机器类型:"), row, 0)
+        self.machine_combo = QComboBox()
+        self.machine_combo.addItems(["pc", "q35", "pc-i440fx-11.1", "pc-i440fx-9.2", "pc-q35-11.1", "pc-q35-9.2", "virt", "microvm"])
+        self.machine_combo.setEditable(True)
+        board_layout.addWidget(self.machine_combo, row, 1)
+        
+        row += 1
+        board_layout.addWidget(QLabel("磁盘接口:"), row, 0)
+        self.disk_interface_combo = QComboBox()
+        self.disk_interface_combo.addItems(["ide", "sata", "virtio", "scsi", "nvme", "usb", "sd", "floppy"])
+        board_layout.addWidget(self.disk_interface_combo, row, 1)
+        
+        row += 1
+        board_layout.addWidget(QLabel("加速模式:"), row, 0)
+        self.accel_combo = QComboBox()
+        self.accel_combo.addItems(["tcg", "hax", "whpx", "kvm", "hvf", "qtest", "none"])
+        board_layout.addWidget(self.accel_combo, row, 1)
+        
+        row += 1
+        board_layout.addWidget(QLabel("USB 控制器:"), row, 0)
+        self.usb_controller_combo = QComboBox()
+        self.usb_controller_combo.addItems(["none", "piix3-usb-uhci", "usb-ehci", "usb-ohci", "usb-uhci", "usb-xhci", "nec-usb-xhci"])
+        board_layout.addWidget(self.usb_controller_combo, row, 1)
+        
+        board_layout.setRowStretch(row + 1, 1)
+        tabs.addTab(board_tab, "🔌 主板/存储")
+        
+        layout.addWidget(tabs)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.save_btn = QPushButton("💾 保存")
+        self.save_btn.setMinimumHeight(36)
+        self.save_btn.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; border-radius: 6px;")
+        self.save_btn.clicked.connect(self.save)
+        btn_layout.addWidget(self.save_btn)
+        
+        self.cancel_btn = QPushButton("取消")
+        self.cancel_btn.setMinimumHeight(36)
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.cancel_btn)
+        
+        layout.addLayout(btn_layout)
+        
+        self.setMinimumSize(550, 500)
+        self.resize(550, 500)
+    
+    def load_data(self, data: dict):
+        self.name_edit.setText(data.get("name", ""))
+        self.name_edit.setReadOnly(True)
+        self.year_spin.setValue(data.get("year", 2024))
+        self.desc_edit.setText(data.get("description", ""))
+        self.cpu_model_combo.setCurrentText(data.get("cpu_model", "host"))
+        self.cpu_flags_edit.setText(data.get("cpu_flags", ""))
+        self.vga_combo.setCurrentText(data.get("vga", "virtio"))
+        self.display_combo.setCurrentText(data.get("display", "gtk"))
+        self.sound_combo.setCurrentText(data.get("sound", "hda"))
+        self.nic_combo.setCurrentText(data.get("nic", "virtio"))
+        self.machine_combo.setCurrentText(data.get("machine", "q35"))
+        self.disk_interface_combo.setCurrentText(data.get("disk_interface", "virtio"))
+        self.accel_combo.setCurrentText(data.get("accel", "hax"))
+        self.usb_controller_combo.setCurrentText(data.get("usb_controller", "usb-ehci"))
+    
+    def get_data(self) -> dict:
+        return {
+            "name": self.name_edit.text().strip(),
+            "year": self.year_spin.value(),
+            "description": self.desc_edit.text().strip(),
+            "cpu_model": self.cpu_model_combo.currentText(),
+            "cpu_flags": self.cpu_flags_edit.text().strip(),
+            "vga": self.vga_combo.currentText(),
+            "display": self.display_combo.currentText(),
+            "sound": self.sound_combo.currentText(),
+            "nic": self.nic_combo.currentText(),
+            "machine": self.machine_combo.currentText(),
+            "disk_interface": self.disk_interface_combo.currentText(),
+            "accel": self.accel_combo.currentText(),
+            "usb_controller": self.usb_controller_combo.currentText(),
+        }
+    
+    def save(self):
+        name = self.name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "提示", "请输入配置名称")
+            return
+        
+        if not self.is_edit and self.manager.get_profile(name):
+            QMessageBox.warning(self, "提示", f"配置 '{name}' 已存在")
+            return
+        
+        data = self.get_data()
+        
+        if self.is_edit:
+            if self.manager.update_profile(name, data):
+                QMessageBox.information(self, "成功", f"✅ 硬件配置 '{name}' 已更新")
+                self.accept()
+            else:
+                QMessageBox.warning(self, "错误", "更新失败")
+        else:
+            if self.manager.create_profile(name, data):
+                QMessageBox.information(self, "成功", f"✅ 硬件配置 '{name}' 已创建")
+                self.accept()
+            else:
+                QMessageBox.warning(self, "错误", "创建失败")
+
+
+# ============================================================
+# 硬件配置管理对话框
+# ============================================================
+class HardwareProfileManagerDialog(QDialog):
+    """硬件配置管理对话框"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.manager = HardwareProfileManager()
+        self.parent_window = parent
+        self.init_ui()
+        self.refresh_list()
+    
+    def init_ui(self):
+        self.setWindowTitle("🔧 硬件配置管理")
+        self.setMinimumSize(750, 550)
+        self.resize(750, 550)
+        
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+        
+        info_label = QLabel(
+            "📌 管理完整的硬件配置预设\n"
+            "• 包含 CPU、显卡、声卡、网卡、磁盘接口、机器类型等所有硬件参数\n"
+            "• 内置配置 (2011-2024) 不可编辑/删除\n"
+            "• 自定义配置保存在 hardware_profiles/custom/*.json"
+        )
+        info_label.setStyleSheet("color: #aaaaaa; font-size: 12px; padding: 8px; background: #1a1a1a; border-radius: 6px;")
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+        
+        self.list_widget = QListWidget()
+        self.list_widget.setFont(QFont("Microsoft YaHei", 12))
+        self.list_widget.itemSelectionChanged.connect(self.on_selection_changed)
+        layout.addWidget(self.list_widget)
+        
+        detail_group = QGroupBox("📋 详情")
+        detail_layout = QGridLayout(detail_group)
+        detail_layout.setVerticalSpacing(4)
+        detail_layout.setHorizontalSpacing(10)
+        
+        self.detail_labels = {}
+        fields = [
+            ("名称:", "name"),
+            ("年份:", "year"),
+            ("描述:", "desc"),
+            ("CPU 型号:", "cpu_model"),
+            ("指令集标志:", "cpu_flags"),
+            ("显卡:", "vga"),
+            ("显示后端:", "display"),
+            ("声卡:", "sound"),
+            ("网卡:", "nic"),
+            ("磁盘接口:", "disk_interface"),
+            ("机器类型:", "machine"),
+            ("加速模式:", "accel"),
+            ("USB 控制器:", "usb_controller"),
+        ]
+        
+        row = 0
+        col = 0
+        for label_text, key in fields:
+            detail_layout.addWidget(QLabel(label_text), row, col * 2)
+            self.detail_labels[key] = QLabel("-")
+            self.detail_labels[key].setWordWrap(True)
+            self.detail_labels[key].setStyleSheet("color: #ddd; font-weight: bold;")
+            detail_layout.addWidget(self.detail_labels[key], row, col * 2 + 1)
+            
+            col += 1
+            if col >= 2:
+                col = 0
+                row += 1
+        
+        layout.addWidget(detail_group)
+        
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        self.new_btn = QPushButton("📦 新建")
+        self.new_btn.clicked.connect(self.create_profile)
+        btn_layout.addWidget(self.new_btn)
+        
+        self.edit_btn = QPushButton("✏️ 编辑")
+        self.edit_btn.clicked.connect(self.edit_profile)
+        self.edit_btn.setEnabled(False)
+        btn_layout.addWidget(self.edit_btn)
+        
+        self.delete_btn = QPushButton("🗑️ 删除")
+        self.delete_btn.clicked.connect(self.delete_profile)
+        self.delete_btn.setEnabled(False)
+        btn_layout.addWidget(self.delete_btn)
+        
+        self.apply_btn = QPushButton("✅ 应用到当前虚拟机")
+        self.apply_btn.clicked.connect(self.apply_to_current_vm)
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.setStyleSheet("background-color: #2196F3; color: white;")
+        btn_layout.addWidget(self.apply_btn)
+        
+        self.refresh_btn = QPushButton("🔄 刷新")
+        self.refresh_btn.clicked.connect(self.refresh_list)
+        btn_layout.addWidget(self.refresh_btn)
+        
+        self.close_btn = QPushButton("关闭")
+        self.close_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(self.close_btn)
+        
+        layout.addLayout(btn_layout)
+    
+    def refresh_list(self):
+        self.list_widget.clear()
+        self.manager.load_all()
+        
+        for name in self.manager.get_all_names():
+            data = self.manager.get_profile(name)
+            if data:
+                icon = "🔒" if data.get("is_builtin", False) else "📄"
+                item = QListWidgetItem(f"{icon} {name} ({data.get('year', 0)})")
+                item.setData(Qt.UserRole, name)
+                if data.get("is_builtin", False):
+                    item.setForeground(QColor("#888888"))
+                self.list_widget.addItem(item)
+        
+        self.clear_details()
+        self.edit_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
+        self.apply_btn.setEnabled(False)
+    
+    def clear_details(self):
+        for key, label in self.detail_labels.items():
+            label.setText("-")
+    
+    def on_selection_changed(self):
+        items = self.list_widget.selectedItems()
+        if not items:
+            self.clear_details()
+            self.edit_btn.setEnabled(False)
+            self.delete_btn.setEnabled(False)
+            self.apply_btn.setEnabled(False)
+            return
+        
+        name = items[0].data(Qt.UserRole)
+        data = self.manager.get_profile(name)
+        if not data:
+            return
+        
+        field_map = {
+            "name": "name",
+            "year": "year",
+            "desc": "description",
+            "cpu_model": "cpu_model",
+            "cpu_flags": "cpu_flags",
+            "vga": "vga",
+            "display": "display",
+            "sound": "sound",
+            "nic": "nic",
+            "disk_interface": "disk_interface",
+            "machine": "machine",
+            "accel": "accel",
+            "usb_controller": "usb_controller",
+        }
+        
+        for key, label in self.detail_labels.items():
+            src_key = field_map.get(key, key)
+            val = data.get(src_key, "-")
+            if val == "":
+                val = "(空)"
+            label.setText(str(val))
+        
+        is_builtin = data.get("is_builtin", False)
+        self.edit_btn.setEnabled(not is_builtin)
+        self.delete_btn.setEnabled(not is_builtin)
+        self.apply_btn.setEnabled(True)
+    
+    def create_profile(self):
+        dialog = HardwareProfileEditDialog(self, None, self.manager)
+        if dialog.exec() == QDialog.Accepted:
+            self.refresh_list()
+    
+    def edit_profile(self):
+        items = self.list_widget.selectedItems()
+        if not items:
+            return
+        name = items[0].data(Qt.UserRole)
+        data = self.manager.get_profile(name)
+        if not data or data.get("is_builtin", False):
+            QMessageBox.warning(self, "提示", "内置配置不可编辑")
+            return
+        
+        dialog = HardwareProfileEditDialog(self, name, self.manager)
+        if dialog.exec() == QDialog.Accepted:
+            self.refresh_list()
+    
+    def delete_profile(self):
+        items = self.list_widget.selectedItems()
+        if not items:
+            return
+        name = items[0].data(Qt.UserRole)
+        data = self.manager.get_profile(name)
+        if not data or data.get("is_builtin", False):
+            QMessageBox.warning(self, "提示", "内置配置不可删除")
+            return
+        
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除硬件配置 '{name}' 吗？",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if self.manager.delete_profile(name):
+                QMessageBox.information(self, "成功", f"✅ 配置 '{name}' 已删除")
+                self.refresh_list()
+    
+    def apply_to_current_vm(self):
+        main_window = self.parent_window
+        while main_window and not hasattr(main_window, 'current_vm'):
+            main_window = main_window.parent() if hasattr(main_window, 'parent') else None
+        
+        if not main_window or not hasattr(main_window, 'current_vm') or not main_window.current_vm:
+            QMessageBox.warning(self, "提示", "请先在主界面选择一个虚拟机")
+            return
+        
+        items = self.list_widget.selectedItems()
+        if not items:
+            return
+        
+        name = items[0].data(Qt.UserRole)
+        profile = self.manager.get_profile(name)
+        if not profile:
+            return
+        
+        vm = main_window.current_vm
+        self.manager.apply_to_vm(name, vm)
+        
+        config_file = VMS_DIR / vm.name / "config.json"
+        if config_file.exists():
+            with open(config_file, 'w', encoding='utf-8') as f:
+                json.dump(vm.to_dict(), f, indent=2, ensure_ascii=False)
+        
+        if hasattr(main_window, 'update_summary') and hasattr(main_window, 'update_config_tab'):
+            main_window.update_summary(vm)
+            main_window.update_config_tab(vm)
+        
+        QMessageBox.information(self, "成功", f"✅ 硬件配置 '{name}' 已应用到虚拟机 '{vm.name}'")
+
+
+# ============================================================
+# 网络模式常量
+# ============================================================
+NETWORK_MODES = {
+    "user": {
+        "name": "user",
+        "label": "用户态网络 (默认)",
+        "description": "QEMU 内置用户态网络栈，支持端口转发，无需额外配置",
+        "needs_admin": False,
+        "needs_tap": False,
+        "supports_port_fwd": True,
+    },
+    "bridge": {
+        "name": "bridge",
+        "label": "桥接模式",
+        "description": "通过 TAP 设备和桥接接口，让虚拟机直接接入主机网络",
+        "needs_admin": True,
+        "needs_tap": True,
+        "supports_port_fwd": False,
+    },
+    "tap": {
+        "name": "tap",
+        "label": "TAP 直连",
+        "description": "直接使用 TAP 设备连接主机网络，需要手动配置 IP",
+        "needs_admin": True,
+        "needs_tap": True,
+        "supports_port_fwd": False,
+    },
+    "socket": {
+        "name": "socket",
+        "label": "Socket 网络",
+        "description": "多虚拟机之间通过 Socket 通信，适合集群环境",
+        "needs_admin": False,
+        "needs_tap": False,
+        "supports_port_fwd": False,
+    },
+    "vde": {
+        "name": "vde",
+        "label": "VDE 网络",
+        "description": "虚拟分布式以太网，多虚拟机互联",
+        "needs_admin": False,
+        "needs_tap": False,
+        "supports_port_fwd": False,
+    },
+    "none": {
+        "name": "none",
+        "label": "无网络",
+        "description": "完全禁用网络",
+        "needs_admin": False,
+        "needs_tap": False,
+        "supports_port_fwd": False,
+    },
+}
+
+# ============================================================
+# QEMU 硬件检测
 # ============================================================
 class QEMUHardwareDetector:
     """检测QEMU支持的硬件"""
@@ -156,7 +1040,6 @@ class QEMUHardwareDetector:
         self.detect_acceleration()
     
     def scan_qemu_versions(self):
-        """扫描所有QEMU版本"""
         for item in BASE_DIR.iterdir():
             if item.is_dir() and item.name.startswith("qemu"):
                 exe_path = None
@@ -174,7 +1057,6 @@ class QEMUHardwareDetector:
                     }
     
     def get_qemu_info(self, exe_path: str) -> dict:
-        """获取QEMU版本信息 - 完整版（独立try-except + 20秒超时）"""
         info = {
             "version": "未知",
             "year": 2020,
@@ -193,9 +1075,6 @@ class QEMUHardwareDetector:
             "block_drivers": []
         }
         
-        exe_name = Path(exe_path).name if Path(exe_path).name else "QEMU"
-        
-        # 版本信息 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "--version"],
@@ -208,12 +1087,26 @@ class QEMUHardwareDetector:
                 year_match = re.search(r'(20[1-9][0-9])', version_line)
                 if year_match:
                     info["year"] = int(year_match.group(1))
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} --version 超时（20秒），跳过版本检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} --version 出错: {e}")
+        except:
+            pass
         
-        # 检测设备 - 单独 try-except
+        # 检测 CPU 型号
+        try:
+            result = subprocess.run(
+                [exe_path, "-cpu", "help"],
+                capture_output=True, text=True, encoding='utf-8', errors='ignore',
+                timeout=20
+            )
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    line = line.strip()
+                    if line and not line.startswith(('-', 'Available', 'Valid', 'x86', 'Recognized')):
+                        item = line.split()[0]
+                        if item and item not in info["cpu_models"]:
+                            info["cpu_models"].append(item)
+        except:
+            pass
+        
         try:
             result = subprocess.run(
                 [exe_path, "-device", "help"],
@@ -230,12 +1123,9 @@ class QEMUHardwareDetector:
                             info["pci_devices"].append(name)
                         elif bus == "USB":
                             info["usb_devices"].append(name)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -device help 超时（20秒），跳过设备检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -device help 出错: {e}")
+        except:
+            pass
         
-        # 检测显卡 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "-vga", "help"],
@@ -249,15 +1139,11 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["vga_types"]:
                             info["vga_types"].append(item)
-                            # GPU 型号（用于 GPU 下拉框）
                             if item not in info["gpu_models"]:
                                 info["gpu_models"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -vga help 超时（20秒），跳过显卡检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -vga help 出错: {e}")
+        except:
+            pass
         
-        # 检测显示后端 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "-display", "help"],
@@ -271,12 +1157,9 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["display_types"]:
                             info["display_types"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -display help 超时（20秒），跳过显示后端检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -display help 出错: {e}")
+        except:
+            pass
         
-        # 检测机器类型 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "-machine", "help"],
@@ -292,31 +1175,9 @@ class QEMUHardwareDetector:
                             machine = parts[0].replace(':', '')
                             if machine and machine not in info["machine_types"]:
                                 info["machine_types"].append(machine)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -machine help 超时（20秒），跳过机器类型检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -machine help 出错: {e}")
+        except:
+            pass
         
-        # 检测CPU模型 - 单独 try-except（完整版）
-        try:
-            result = subprocess.run(
-                [exe_path, "-cpu", "help"],
-                capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                timeout=20
-            )
-            if result.returncode == 0:
-                for line in result.stdout.split('\n'):
-                    line = line.strip()
-                    if line and not line.startswith(('-', 'Available', 'Valid', 'x86', 'Recognized')):
-                        item = line.split()[0]
-                        if item and item not in info["cpu_models"]:
-                            info["cpu_models"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -cpu help 超时（20秒），跳过CPU模型检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -cpu help 出错: {e}")
-        
-        # 检测加速器 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "-accel", "help"],
@@ -330,12 +1191,9 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["accel_types"]:
                             info["accel_types"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -accel help 超时（20秒），跳过加速器检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -accel help 出错: {e}")
+        except:
+            pass
         
-        # 检测网络后端 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "-netdev", "help"],
@@ -349,12 +1207,9 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["netdev_types"]:
                             info["netdev_types"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -netdev help 超时（20秒），跳过网络后端检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -netdev help 出错: {e}")
+        except:
+            pass
         
-        # 检测音频设备 - 单独 try-except
         try:
             result = subprocess.run(
                 [exe_path, "-audiodev", "help"],
@@ -368,12 +1223,9 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["audio_devices"]:
                             info["audio_devices"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -audiodev help 超时（20秒），跳过音频设备检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -audiodev help 出错: {e}")
+        except:
+            pass
         
-        # 检测固件（-fw_cfg 或 -bios 相关）
         try:
             result = subprocess.run(
                 [exe_path, "-fw_cfg", "help"],
@@ -387,12 +1239,9 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["firmware_types"]:
                             info["firmware_types"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -fw_cfg help 超时（20秒），跳过固件检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -fw_cfg help 出错: {e}")
+        except:
+            pass
         
-        # 检测块设备驱动（-drive 相关）
         try:
             result = subprocess.run(
                 [exe_path, "-drive", "help"],
@@ -406,15 +1255,12 @@ class QEMUHardwareDetector:
                         item = line.split()[0]
                         if item and item not in info["block_drivers"]:
                             info["block_drivers"].append(item)
-        except subprocess.TimeoutExpired:
-            print(f"⚠️ {exe_name} -drive help 超时（20秒），跳过块设备驱动检测")
-        except Exception as e:
-            print(f"⚠️ {exe_name} -drive help 出错: {e}")
+        except:
+            pass
                             
         return info
     
     def detect_acceleration(self):
-        """检测当前系统支持的硬件加速"""
         self.available_accel = []
         self.hypervisor_info = {}
         
@@ -435,7 +1281,6 @@ class QEMUHardwareDetector:
                 if "RUNNING" in result.stdout or "STOPPED" in result.stdout:
                     self.hypervisor_info["haxm"] = True
                     self.available_accel.append("hax")
-                    
             except:
                 pass
         
@@ -464,6 +1309,489 @@ class QEMUHardwareDetector:
             self.available_accel.insert(0, "tcg")
         
         self.default_accel = self.available_accel[0] if self.available_accel else "tcg"
+
+# ========== VMConfig 类 ==========
+class VMConfig:
+    def __init__(self, name: str = ""):
+        self.name = name
+        self.vm_dir = VMS_DIR / name
+        self.os_type = "Windows"
+        self.os_version = "10"
+        self.arch = "x86_64"
+        self.memory = 4096
+        self.cpu = 4
+        self.disk_size = 64
+        self.disk_format = "qcow2"
+        self.disk_interface = "sata"
+        self.disk_path = ""
+        self.disks: List[Dict] = []
+        self.disk_id_counter = 0
+        self.boot_iso = ""
+        self.kernel_iso = ""
+        self.driver_iso = ""
+        self.created = ""
+        self.cpu_model = "host"
+        self.cpu_profile = ""
+        self.accel = "hax"
+        self.vga = "virtio"
+        self.display = "gtk"
+        self.resolution = "1920x1080"
+        self.machine_type = "q35"
+        self.acpi = True
+        self.usb = True
+        self.sound = "hda"
+        self.boot_order = "cdrom"
+        self.opengl = True
+        self.nic_model = "virtio"
+        self.qemu_version = "qemu-w64-setup-20251224"
+        self.preset = "Windows 10"
+        self.extra_args = ""
+        self.no_hpet = False
+        self.no_kvm = False
+        self.vnc_port = ""
+        self.smp_threads = 1
+        self.smp_sockets = 1
+        self.share_enabled = False
+        self.share_dir = ""
+
+        # 网络模式相关 (新增)
+        self.network_mode = "user"  # user, bridge, tap, socket, vde, none
+        self.bridge_interface = ""  # 桥接网卡名，如 br0
+        self.tap_interface = ""     # TAP 设备名，如 tap0
+        self.socket_path = ""       # socket 路径
+        self.vde_socket = ""        # VDE socket
+        self.network_script = ""    # 网络脚本路径
+        self.network_down_script = ""  # 网络关闭脚本
+
+        # 原有高级字段
+        self.cache = "writeback"
+        self.aio = "默认"
+        self.discard = "默认"
+        self.detect_zeroes = "默认"
+        self.backing_file = ""
+        self.snapshot_mode = False
+        self.disk_readonly = False
+        self.hostfwd = ""
+        self.net_subnet = ""
+        self.net_dns = ""
+        self.net_restrict = False
+        self.mac_address = ""
+        self.cpu_flags = ""
+        self.numa_config = ""
+        self.mem_prealloc = False
+        self.hugepages = False
+        self.no_hpet_adv = False
+        self.no_kvm_nested = False
+        self.force_tcg = False
+        self.usb_tablet = True
+        self.bios_file = ""
+        self.vnc_password = ""
+        self.spice_port = ""
+        self.spice_password = ""
+        self.no_mouse_integration = False
+        self.log_file = ""
+        self.debug_level = "默认"
+        self.qmp_socket = ""
+        self.monitor_stdio = False
+        self.no_reboot = False
+        self.no_shutdown = False
+        self.sandbox = False
+        self.rtc_base = ""
+        self.seed_value = ""
+        self.boot_menu = False
+        self.boot_once = ""
+        self.extra_advanced_args = ""
+
+        # 自定义硬件字段
+        self.custom_cpu_vendor = "AuthenticAMD"
+        self.custom_cpu_family = "6"
+        self.custom_cpu_model_id = "94"
+        self.custom_cpu_stepping = "3"
+        self.custom_cpu_level = "0x1"
+        self.custom_cpu_xlevel = "0x80000008"
+        self.custom_cpu_features = "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves"
+        self.custom_gpu_model = "virtio-vga-gl"
+        self.custom_gpu_ram = 256
+        self.custom_gpu_freq = 800
+        self.custom_gpu_vgamem = 64
+        self.custom_nic_model = "virtio-net-pci"
+        self.custom_nic_mac = ""
+        self.custom_nic_queues = 1
+        self.custom_disk_cache = "writeback"
+        self.custom_disk_aio = "native"
+        self.custom_disk_discard = "unmap"
+        self.custom_disk_detect_zeroes = "unmap"
+        self.custom_disk_latency = 0
+        self.custom_audio_model = "ich9-intel-hda"
+        self.custom_audio_codec = "hda-duplex"
+        self.custom_usb_controller = "usb-ehci"
+        self.custom_usb_ports = 6
+        self.custom_pci_bus = "pcie.0"
+        self.custom_pci_slot = 0
+        self.custom_serial = "pty"
+        self.custom_parallel = "none"
+        self.custom_bios = ""
+        self.custom_firmware = ""
+        self.custom_rtc = "utc"
+
+        self.cpu_capacity = 100
+        self.cpu_latency = 10
+        self.cpu_quota = 0
+        self.cpu_period = 100000
+        self.gpu_edid = ""
+        self.gpu_rendernode = ""
+        self.gpu_gl_version = "3.3"
+        self.cpu_freq = 0
+        self.cpu_clock = 0
+
+        self.storage_type = "file"
+        self.storage_format = "qcow2"
+        self.storage_encryption = False
+        self.storage_encryption_key = ""
+        self.storage_compression = False
+        self.storage_cluster_size = 65536
+
+        self.security_selinux = False
+        self.security_apparmor = False
+        self.security_chroot = ""
+        self.security_user = ""
+
+        self.trace_events = ""
+        self.log_level = 0
+        self.gdb_port = 1234
+        self.gdb_stop = False
+
+    def add_disk(self, path: str, size_gb: int, format_type: str = "qcow2",
+                 interface: str = "sata", cache: str = "writeback",
+                 backing_file: str = "", readonly: bool = False,
+                 removable: bool = False) -> Dict:
+        self.disk_id_counter += 1
+        disk = {
+            "id": self.disk_id_counter,
+            "path": path,
+            "size": size_gb,
+            "format": format_type,
+            "interface": interface,
+            "cache": cache,
+            "backing_file": backing_file,
+            "readonly": readonly,
+            "removable": removable
+        }
+        self.disks.append(disk)
+        if len(self.disks) == 1:
+            self.disk_path = path
+            self.disk_size = size_gb
+            self.disk_format = format_type
+            self.disk_interface = interface
+        return disk
+
+    def remove_disk(self, disk_id: int):
+        self.disks = [d for d in self.disks if d["id"] != disk_id]
+        if self.disks:
+            first = self.disks[0]
+            self.disk_path = first["path"]
+            self.disk_size = first["size"]
+            self.disk_format = first["format"]
+            self.disk_interface = first["interface"]
+        else:
+            self.disk_path = ""
+            self.disk_size = 0
+            self.disk_format = "qcow2"
+            self.disk_interface = "sata"
+
+    def get_disk(self, disk_id: int) -> Optional[Dict]:
+        for d in self.disks:
+            if d["id"] == disk_id:
+                return d
+        return None
+
+    def to_dict(self) -> dict:
+        return {
+            "version": CONFIG_VERSION,
+            "name": self.name,
+            "os_type": self.os_type,
+            "os_version": self.os_version,
+            "arch": self.arch,
+            "memory": self.memory,
+            "cpu": self.cpu,
+            "smp_threads": self.smp_threads,
+            "smp_sockets": self.smp_sockets,
+            "disk_size": self.disk_size,
+            "disk_format": self.disk_format,
+            "disk_interface": self.disk_interface,
+            "disk_path": self.disk_path,
+            "disks": self.disks,
+            "disk_id_counter": self.disk_id_counter,
+            "boot_iso": self.boot_iso,
+            "kernel_iso": self.kernel_iso,
+            "driver_iso": self.driver_iso,
+            "created": self.created,
+            "cpu_model": self.cpu_model,
+            "cpu_profile": self.cpu_profile,
+            "accel": self.accel,
+            "vga": self.vga,
+            "display": self.display,
+            "resolution": self.resolution,
+            "machine_type": self.machine_type,
+            "acpi": self.acpi,
+            "usb": self.usb,
+            "sound": self.sound,
+            "boot_order": self.boot_order,
+            "opengl": self.opengl,
+            "nic_model": self.nic_model,
+            "qemu_version": self.qemu_version,
+            "preset": self.preset,
+            "extra_args": self.extra_args,
+            "no_hpet": self.no_hpet,
+            "no_kvm": self.no_kvm,
+            "vnc_port": self.vnc_port,
+            "share_enabled": self.share_enabled,
+            "share_dir": self.share_dir,
+            "cache": self.cache,
+            "aio": self.aio,
+            "discard": self.discard,
+            "detect_zeroes": self.detect_zeroes,
+            "backing_file": self.backing_file,
+            "snapshot_mode": self.snapshot_mode,
+            "disk_readonly": self.disk_readonly,
+            "hostfwd": self.hostfwd,
+            "net_subnet": self.net_subnet,
+            "net_dns": self.net_dns,
+            "net_restrict": self.net_restrict,
+            "tap_interface": self.tap_interface,
+            "mac_address": self.mac_address,
+            "cpu_flags": self.cpu_flags,
+            "numa_config": self.numa_config,
+            "mem_prealloc": self.mem_prealloc,
+            "hugepages": self.hugepages,
+            "no_hpet_adv": self.no_hpet_adv,
+            "no_kvm_nested": self.no_kvm_nested,
+            "force_tcg": self.force_tcg,
+            "usb_tablet": self.usb_tablet,
+            "bios_file": self.bios_file,
+            "vnc_password": self.vnc_password,
+            "spice_port": self.spice_port,
+            "spice_password": self.spice_password,
+            "no_mouse_integration": self.no_mouse_integration,
+            "log_file": self.log_file,
+            "debug_level": self.debug_level,
+            "qmp_socket": self.qmp_socket,
+            "monitor_stdio": self.monitor_stdio,
+            "no_reboot": self.no_reboot,
+            "no_shutdown": self.no_shutdown,
+            "sandbox": self.sandbox,
+            "rtc_base": self.rtc_base,
+            "seed_value": self.seed_value,
+            "boot_menu": self.boot_menu,
+            "boot_once": self.boot_once,
+            "extra_advanced_args": self.extra_advanced_args,
+            "custom_cpu_vendor": self.custom_cpu_vendor,
+            "custom_cpu_family": self.custom_cpu_family,
+            "custom_cpu_model_id": self.custom_cpu_model_id,
+            "custom_cpu_stepping": self.custom_cpu_stepping,
+            "custom_cpu_level": self.custom_cpu_level,
+            "custom_cpu_xlevel": self.custom_cpu_xlevel,
+            "custom_cpu_features": self.custom_cpu_features,
+            "custom_gpu_model": self.custom_gpu_model,
+            "custom_gpu_ram": self.custom_gpu_ram,
+            "custom_gpu_freq": self.custom_gpu_freq,
+            "custom_gpu_vgamem": self.custom_gpu_vgamem,
+            "custom_nic_model": self.custom_nic_model,
+            "custom_nic_mac": self.custom_nic_mac,
+            "custom_nic_queues": self.custom_nic_queues,
+            "custom_disk_cache": self.custom_disk_cache,
+            "custom_disk_aio": self.custom_disk_aio,
+            "custom_disk_discard": self.custom_disk_discard,
+            "custom_disk_detect_zeroes": self.custom_disk_detect_zeroes,
+            "custom_disk_latency": self.custom_disk_latency,
+            "custom_audio_model": self.custom_audio_model,
+            "custom_audio_codec": self.custom_audio_codec,
+            "custom_usb_controller": self.custom_usb_controller,
+            "custom_usb_ports": self.custom_usb_ports,
+            "custom_pci_bus": self.custom_pci_bus,
+            "custom_pci_slot": self.custom_pci_slot,
+            "custom_serial": self.custom_serial,
+            "custom_parallel": self.custom_parallel,
+            "custom_bios": self.custom_bios,
+            "custom_firmware": self.custom_firmware,
+            "custom_rtc": self.custom_rtc,
+            "cpu_capacity": self.cpu_capacity,
+            "cpu_latency": self.cpu_latency,
+            "cpu_quota": self.cpu_quota,
+            "cpu_period": self.cpu_period,
+            "gpu_edid": self.gpu_edid,
+            "gpu_rendernode": self.gpu_rendernode,
+            "gpu_gl_version": self.gpu_gl_version,
+            "cpu_freq": self.cpu_freq,
+            "cpu_clock": self.cpu_clock,
+            "storage_type": self.storage_type,
+            "storage_format": self.storage_format,
+            "storage_encryption": self.storage_encryption,
+            "storage_encryption_key": self.storage_encryption_key,
+            "storage_compression": self.storage_compression,
+            "storage_cluster_size": self.storage_cluster_size,
+            "security_selinux": self.security_selinux,
+            "security_apparmor": self.security_apparmor,
+            "security_chroot": self.security_chroot,
+            "security_user": self.security_user,
+            "trace_events": self.trace_events,
+            "log_level": self.log_level,
+            "gdb_port": self.gdb_port,
+            "gdb_stop": self.gdb_stop,
+            # 新增网络模式字段
+            "network_mode": self.network_mode,
+            "bridge_interface": self.bridge_interface,
+            "tap_interface": self.tap_interface,
+            "socket_path": self.socket_path,
+            "vde_socket": self.vde_socket,
+            "network_script": self.network_script,
+            "network_down_script": self.network_down_script,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> 'VMConfig':
+        vm = cls(data.get("name", ""))
+        vm.os_type = data.get("os_type", "Windows")
+        vm.os_version = data.get("os_version", "10")
+        vm.arch = data.get("arch", "x86_64")
+        vm.memory = data.get("memory", 4096)
+        vm.cpu = data.get("cpu", 4)
+        vm.smp_threads = data.get("smp_threads", 1)
+        vm.smp_sockets = data.get("smp_sockets", 1)
+        vm.disk_size = data.get("disk_size", 64)
+        vm.disk_format = data.get("disk_format", "qcow2")
+        vm.disk_interface = data.get("disk_interface", "sata")
+        vm.disk_path = data.get("disk_path", "")
+        vm.disks = data.get("disks", [])
+        vm.disk_id_counter = data.get("disk_id_counter", 0)
+        vm.boot_iso = data.get("boot_iso", "")
+        vm.kernel_iso = data.get("kernel_iso", "")
+        vm.driver_iso = data.get("driver_iso", "")
+        vm.created = data.get("created", "")
+        vm.cpu_model = data.get("cpu_model", "host")
+        vm.cpu_profile = data.get("cpu_profile", "")
+        vm.accel = data.get("accel", "hax")
+        vm.vga = data.get("vga", "virtio")
+        vm.display = data.get("display", "gtk")
+        vm.resolution = data.get("resolution", "1920x1080")
+        vm.machine_type = data.get("machine_type", "q35")
+        vm.acpi = data.get("acpi", True)
+        vm.usb = data.get("usb", True)
+        vm.sound = data.get("sound", "hda")
+        vm.boot_order = data.get("boot_order", "cdrom")
+        vm.opengl = data.get("opengl", True)
+        vm.nic_model = data.get("nic_model", "virtio")
+        vm.qemu_version = data.get("qemu_version", "qemu-w64-setup-20251224")
+        vm.preset = data.get("preset", "Windows 10")
+        vm.extra_args = data.get("extra_args", "")
+        vm.no_hpet = data.get("no_hpet", False)
+        vm.no_kvm = data.get("no_kvm", False)
+        vm.vnc_port = data.get("vnc_port", "")
+        vm.share_enabled = data.get("share_enabled", False)
+        vm.share_dir = data.get("share_dir", "")
+        vm.cache = data.get("cache", "writeback")
+        vm.aio = data.get("aio", "默认")
+        vm.discard = data.get("discard", "默认")
+        vm.detect_zeroes = data.get("detect_zeroes", "默认")
+        vm.backing_file = data.get("backing_file", "")
+        vm.snapshot_mode = data.get("snapshot_mode", False)
+        vm.disk_readonly = data.get("disk_readonly", False)
+        vm.hostfwd = data.get("hostfwd", "")
+        vm.net_subnet = data.get("net_subnet", "")
+        vm.net_dns = data.get("net_dns", "")
+        vm.net_restrict = data.get("net_restrict", False)
+        vm.tap_interface = data.get("tap_interface", "")
+        vm.mac_address = data.get("mac_address", "")
+        vm.cpu_flags = data.get("cpu_flags", "")
+        vm.numa_config = data.get("numa_config", "")
+        vm.mem_prealloc = data.get("mem_prealloc", False)
+        vm.hugepages = data.get("hugepages", False)
+        vm.no_hpet_adv = data.get("no_hpet_adv", False)
+        vm.no_kvm_nested = data.get("no_kvm_nested", False)
+        vm.force_tcg = data.get("force_tcg", False)
+        vm.usb_tablet = data.get("usb_tablet", True)
+        vm.bios_file = data.get("bios_file", "")
+        vm.vnc_password = data.get("vnc_password", "")
+        vm.spice_port = data.get("spice_port", "")
+        vm.spice_password = data.get("spice_password", "")
+        vm.no_mouse_integration = data.get("no_mouse_integration", False)
+        vm.log_file = data.get("log_file", "")
+        vm.debug_level = data.get("debug_level", "默认")
+        vm.qmp_socket = data.get("qmp_socket", "")
+        vm.monitor_stdio = data.get("monitor_stdio", False)
+        vm.no_reboot = data.get("no_reboot", False)
+        vm.no_shutdown = data.get("no_shutdown", False)
+        vm.sandbox = data.get("sandbox", False)
+        vm.rtc_base = data.get("rtc_base", "")
+        vm.seed_value = data.get("seed_value", "")
+        vm.boot_menu = data.get("boot_menu", False)
+        vm.boot_once = data.get("boot_once", "")
+        vm.extra_advanced_args = data.get("extra_advanced_args", "")
+        vm.custom_cpu_vendor = data.get("custom_cpu_vendor", "AuthenticAMD")
+        vm.custom_cpu_family = data.get("custom_cpu_family", "6")
+        vm.custom_cpu_model_id = data.get("custom_cpu_model_id", "94")
+        vm.custom_cpu_stepping = data.get("custom_cpu_stepping", "3")
+        vm.custom_cpu_level = data.get("custom_cpu_level", "0x1")
+        vm.custom_cpu_xlevel = data.get("custom_cpu_xlevel", "0x80000008")
+        vm.custom_cpu_features = data.get("custom_cpu_features", "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves")
+        vm.custom_gpu_model = data.get("custom_gpu_model", "virtio-vga-gl")
+        vm.custom_gpu_ram = data.get("custom_gpu_ram", 256)
+        vm.custom_gpu_freq = data.get("custom_gpu_freq", 800)
+        vm.custom_gpu_vgamem = data.get("custom_gpu_vgamem", 64)
+        vm.custom_nic_model = data.get("custom_nic_model", "virtio-net-pci")
+        vm.custom_nic_mac = data.get("custom_nic_mac", "")
+        vm.custom_nic_queues = data.get("custom_nic_queues", 1)
+        vm.custom_disk_cache = data.get("custom_disk_cache", "writeback")
+        vm.custom_disk_aio = data.get("custom_disk_aio", "native")
+        vm.custom_disk_discard = data.get("custom_disk_discard", "unmap")
+        vm.custom_disk_detect_zeroes = data.get("custom_disk_detect_zeroes", "unmap")
+        vm.custom_disk_latency = data.get("custom_disk_latency", 0)
+        vm.custom_audio_model = data.get("custom_audio_model", "ich9-intel-hda")
+        vm.custom_audio_codec = data.get("custom_audio_codec", "hda-duplex")
+        vm.custom_usb_controller = data.get("custom_usb_controller", "usb-ehci")
+        vm.custom_usb_ports = data.get("custom_usb_ports", 6)
+        vm.custom_pci_bus = data.get("custom_pci_bus", "pcie.0")
+        vm.custom_pci_slot = data.get("custom_pci_slot", 0)
+        vm.custom_serial = data.get("custom_serial", "pty")
+        vm.custom_parallel = data.get("custom_parallel", "none")
+        vm.custom_bios = data.get("custom_bios", "")
+        vm.custom_firmware = data.get("custom_firmware", "")
+        vm.custom_rtc = data.get("custom_rtc", "utc")
+        vm.cpu_capacity = data.get("cpu_capacity", 100)
+        vm.cpu_latency = data.get("cpu_latency", 10)
+        vm.cpu_quota = data.get("cpu_quota", 0)
+        vm.cpu_period = data.get("cpu_period", 100000)
+        vm.gpu_edid = data.get("gpu_edid", "")
+        vm.gpu_rendernode = data.get("gpu_rendernode", "")
+        vm.gpu_gl_version = data.get("gpu_gl_version", "3.3")
+        vm.cpu_freq = data.get("cpu_freq", 0)
+        vm.cpu_clock = data.get("cpu_clock", 0)
+        vm.storage_type = data.get("storage_type", "file")
+        vm.storage_format = data.get("storage_format", "qcow2")
+        vm.storage_encryption = data.get("storage_encryption", False)
+        vm.storage_encryption_key = data.get("storage_encryption_key", "")
+        vm.storage_compression = data.get("storage_compression", False)
+        vm.storage_cluster_size = data.get("storage_cluster_size", 65536)
+        vm.security_selinux = data.get("security_selinux", False)
+        vm.security_apparmor = data.get("security_apparmor", False)
+        vm.security_chroot = data.get("security_chroot", "")
+        vm.security_user = data.get("security_user", "")
+        vm.trace_events = data.get("trace_events", "")
+        vm.log_level = data.get("log_level", 0)
+        vm.gdb_port = data.get("gdb_port", 1234)
+        vm.gdb_stop = data.get("gdb_stop", False)
+
+        # 加载网络模式字段
+        vm.network_mode = data.get("network_mode", "user")
+        vm.bridge_interface = data.get("bridge_interface", "")
+        vm.tap_interface = data.get("tap_interface", "")
+        vm.socket_path = data.get("socket_path", "")
+        vm.vde_socket = data.get("vde_socket", "")
+        vm.network_script = data.get("network_script", "")
+        vm.network_down_script = data.get("network_down_script", "")
+
+        return vm
+
 
 # ========== 多语言支持 ==========
 LANGUAGES = {
@@ -497,6 +1825,9 @@ LANGUAGES = {
         "menu_language": "🌐 语言",
         "menu_detect": "🔍 检测",
         "menu_detect_hw": "🔍 检测系统硬件",
+        "menu_profile": "🧠 硬件配置",
+        "menu_profile_new": "📦 新建硬件配置",
+        "menu_profile_manage": "📋 管理硬件配置",
         "btn_new": "新建",
         "btn_edit": "编辑",
         "btn_delete": "删除",
@@ -553,6 +1884,7 @@ LANGUAGES = {
         "label_disk_format": "磁盘格式:",
         "label_disk_interface": "磁盘接口:",
         "label_cpu_model": "CPU 型号:",
+        "label_cpu_profile": "硬件配置:",
         "label_accel": "加速模式:",
         "label_machine": "机器类型:",
         "label_qemu_version": "QEMU 版本:",
@@ -734,6 +2066,13 @@ LANGUAGES = {
         "msg_custom_hw": "🔧 点击「自定义硬件」按钮打开完整硬件配置面板",
         "label_gpu_edid_browse": "选择 EDID 文件",
         "label_bios_browse": "选择 BIOS 文件",
+        # 网络模式相关翻译
+        "label_network_mode": "网络模式:",
+        "label_bridge_interface": "桥接接口:",
+        "label_socket_path": "Socket 路径:",
+        "label_vde_socket": "VDE Socket:",
+        "label_network_script": "网络启动脚本:",
+        "label_network_down_script": "网络关闭脚本:",
     },
     "en_US": {
         "name": "English",
@@ -765,6 +2104,9 @@ LANGUAGES = {
         "menu_language": "🌐 Language",
         "menu_detect": "🔍 Detect",
         "menu_detect_hw": "🔍 Detect System Hardware",
+        "menu_profile": "🧠 Hardware Profiles",
+        "menu_profile_new": "📦 New Hardware Profile",
+        "menu_profile_manage": "📋 Manage Hardware Profiles",
         "btn_new": "New",
         "btn_edit": "Edit",
         "btn_delete": "Delete",
@@ -821,6 +2163,7 @@ LANGUAGES = {
         "label_disk_format": "Disk Format:",
         "label_disk_interface": "Disk Interface:",
         "label_cpu_model": "CPU Model:",
+        "label_cpu_profile": "Hardware Profile:",
         "label_accel": "Acceleration:",
         "label_machine": "Machine Type:",
         "label_qemu_version": "QEMU Version:",
@@ -1002,6 +2345,12 @@ LANGUAGES = {
         "msg_custom_hw": "🔧 Click the 'Custom Hardware' button to open the full hardware configuration panel",
         "label_gpu_edid_browse": "Select EDID File",
         "label_bios_browse": "Select BIOS File",
+        "label_network_mode": "Network Mode:",
+        "label_bridge_interface": "Bridge Interface:",
+        "label_socket_path": "Socket Path:",
+        "label_vde_socket": "VDE Socket:",
+        "label_network_script": "Network Up Script:",
+        "label_network_down_script": "Network Down Script:",
     }
 }
 
@@ -1010,12 +2359,12 @@ class Translator:
     _instance = None
     _current_lang = "zh_CN"
     _lang_data = LANGUAGES
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def set_language(self, lang_code: str):
         if lang_code in self._lang_data:
             self._current_lang = lang_code
@@ -1025,17 +2374,17 @@ class Translator:
             except:
                 pass
         self.update_ui()
-    
+
     def update_ui(self):
         if hasattr(self, '_main_window') and self._main_window:
             self._main_window.refresh_ui_texts()
-    
+
     def set_main_window(self, window):
         self._main_window = window
-    
+
     def get_language(self) -> str:
         return self._current_lang
-    
+
     def tr(self, key: str, *args) -> str:
         text = self._lang_data.get(self._current_lang, {}).get(key, key)
         if args:
@@ -1044,20 +2393,17 @@ class Translator:
             except:
                 return text
         return text
-    
+
     def get_languages(self) -> Dict[str, str]:
         return {code: data.get("name", code) for code, data in self._lang_data.items()}
 
 def tr(key: str, *args) -> str:
     return Translator().tr(key, *args)
 
-# ========== 系统检测（新增） ==========
+# ========== 系统检测 ==========
 class SystemDetector:
-    """检测系统硬件信息"""
-    
     @staticmethod
     def get_system_info() -> dict:
-        """获取完整系统信息"""
         info = {
             "操作系统": platform.system() + " " + platform.release(),
             "系统版本": platform.version(),
@@ -1067,8 +2413,7 @@ class SystemDetector:
             "Python版本": platform.python_version(),
             "CPU核心数": os.cpu_count() or "未知",
         }
-        
-        # 内存信息
+
         try:
             vm = psutil.virtual_memory()
             info["总内存"] = f"{vm.total / (1024**3):.1f} GB"
@@ -1076,58 +2421,42 @@ class SystemDetector:
             info["内存使用率"] = f"{vm.percent}%"
         except:
             pass
-        
-        # CPU信息
+
         try:
             cpu_percent = psutil.cpu_percent(interval=0.5)
             info["CPU使用率"] = f"{cpu_percent}%"
         except:
             pass
-        
-        # 磁盘信息
+
         try:
             disk = psutil.disk_usage(str(BASE_DIR))
             info["磁盘总量"] = f"{disk.total / (1024**3):.1f} GB"
             info["磁盘可用"] = f"{disk.free / (1024**3):.1f} GB"
         except:
             pass
-        
-        # 操作系统详细信息
+
         if sys.platform == "win32":
             info["系统"] = "Windows"
-            # Hyper-V检测
             try:
-                result = subprocess.run(
-                    ["systeminfo"], capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                    timeout=15
-                )
+                result = subprocess.run(["systeminfo"], capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=15)
                 if "Hyper-V" in result.stdout:
                     info["Hyper-V"] = "✅ 已启用"
                 else:
                     info["Hyper-V"] = "❌ 未启用"
             except:
                 info["Hyper-V"] = "未知"
-            
-            # WHPX检测
+
             try:
-                result = subprocess.run(
-                    ["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Virtualization"],
-                    capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                    timeout=5
-                )
+                result = subprocess.run(["reg", "query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Virtualization"], capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=5)
                 if result.returncode == 0:
                     info["WHPX"] = "✅ 已支持"
                 else:
                     info["WHPX"] = "❌ 未支持"
             except:
                 info["WHPX"] = "未知"
-            
-            # HAXM检测
+
             try:
-                result = subprocess.run(
-                    ["sc", "query", "haxm"], capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                    timeout=5
-                )
+                result = subprocess.run(["sc", "query", "haxm"], capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=5)
                 if "RUNNING" in result.stdout:
                     info["HAXM"] = "✅ 已启用"
                 elif "STOPPED" in result.stdout:
@@ -1136,7 +2465,7 @@ class SystemDetector:
                     info["HAXM"] = "❌ 未安装"
             except:
                 info["HAXM"] = "未知"
-        
+
         elif sys.platform == "linux":
             info["系统"] = "Linux"
             try:
@@ -1146,27 +2475,22 @@ class SystemDetector:
                     info["KVM"] = "❌ 未支持"
             except:
                 info["KVM"] = "未知"
-        
+
         elif sys.platform == "darwin":
             info["系统"] = "macOS"
             try:
-                result = subprocess.run(
-                    ["sysctl", "kern.hv_support"],
-                    capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                    timeout=5
-                )
+                result = subprocess.run(["sysctl", "kern.hv_support"], capture_output=True, text=True, encoding='utf-8', errors='ignore', timeout=5)
                 if "1" in result.stdout:
                     info["Hypervisor.framework"] = "✅ 已支持"
                 else:
                     info["Hypervisor.framework"] = "❌ 未支持"
             except:
                 info["Hypervisor.framework"] = "未知"
-        
+
         return info
-    
+
     @staticmethod
     def get_qemu_supported_hardware() -> dict:
-        """获取QEMU支持的硬件信息"""
         detector = QEMUHardwareDetector()
         hardware_info = {
             "QEMU版本": [],
@@ -1179,7 +2503,7 @@ class SystemDetector:
             "支持USB设备": [],
             "支持固件": [],
         }
-        
+
         for ver_name, ver_info in detector.qemu_versions.items():
             info = ver_info["info"]
             hardware_info["QEMU版本"].append({
@@ -1187,43 +2511,35 @@ class SystemDetector:
                 "路径": ver_info["path"],
                 "信息": info.get("version", "未知")
             })
-            
-            # 合并所有硬件支持
+
             for item in info.get("cpu_models", []):
                 if item not in hardware_info["支持CPU型号"]:
                     hardware_info["支持CPU型号"].append(item)
-            
             for item in info.get("vga_types", []):
                 if item not in hardware_info["支持显卡"]:
                     hardware_info["支持显卡"].append(item)
-            
             for item in info.get("machine_types", []):
                 if item not in hardware_info["支持机器类型"]:
                     hardware_info["支持机器类型"].append(item)
-            
             for item in info.get("netdev_types", []):
                 if item not in hardware_info["支持网络设备"]:
                     hardware_info["支持网络设备"].append(item)
-            
             for item in info.get("audio_devices", []):
                 if item not in hardware_info["支持音频设备"]:
                     hardware_info["支持音频设备"].append(item)
-            
             for item in info.get("usb_devices", []):
                 if item not in hardware_info["支持USB设备"]:
                     hardware_info["支持USB设备"].append(item)
-            
             for item in info.get("firmware_types", []):
                 if item not in hardware_info["支持固件"]:
                     hardware_info["支持固件"].append(item)
-        
+
         return hardware_info
 
 # ========== 配置选项数据 ==========
 DISK_INTERFACES = ["ide", "sata", "virtio", "scsi", "nvme", "usb", "sd", "floppy"]
 DISK_FORMATS = ["qcow2", "raw", "vmdk", "vdi", "vhdx", "qcow", "cow", "parallels", "dmg", "bochs", "cloop", "luks", "qed", "vpc", "vvfat"]
 MACHINE_TYPES = ["pc", "q35", "pc-i440fx-11.1", "pc-i440fx-9.2", "pc-q35-11.1", "pc-q35-9.2", "virt", "microvm"]
-CPU_MODELS = ["host", "qemu64", "qemu32", "core2duo", "Nehalem", "Westmere", "SandyBridge", "Haswell", "Broadwell", "Skylake-Client", "EPYC"]
 ACCEL_MODES = ["tcg", "hax", "whpx", "kvm", "hvf", "qtest", "none"]
 VGA_TYPES = ["virtio", "std", "cirrus", "vmvga", "qxl", "none", "bochs", "ramfb", "sga"]
 DISPLAY_TYPES = ["gtk", "sdl", "none", "curses", "spice", "egl-headless"]
@@ -1392,7 +2708,7 @@ def find_qemu_img() -> Optional[Path]:
             if qemu_img.exists():
                 return qemu_img
     for cmd in ["qemu-img", "qemu-img.exe"]:
-        result = subprocess.run(["where" if sys.platform == "win32" else "which", cmd], 
+        result = subprocess.run(["where" if sys.platform == "win32" else "which", cmd],
                                capture_output=True, text=True, encoding='utf-8', errors='ignore')
         if result.returncode == 0:
             path = result.stdout.strip().split('\n')[0]
@@ -1407,7 +2723,7 @@ class ConfigHistory:
         self.history: Dict[str, List[Dict]] = defaultdict(list)
         self.max_entries = 20
         self.load()
-    
+
     def load(self):
         if self.history_file.exists():
             try:
@@ -1417,18 +2733,18 @@ class ConfigHistory:
                         self.history[key] = entries[:self.max_entries]
             except Exception as e:
                 print(f"加载历史配置失败: {e}")
-    
+
     def save(self):
         try:
             with open(self.history_file, 'w', encoding='utf-8') as f:
                 json.dump(dict(self.history), f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"保存历史配置失败: {e}")
-    
+
     def add_entry(self, vm_name: str, config: Dict):
         if vm_name not in self.history:
             self.history[vm_name] = []
-        
+
         entry = {
             "timestamp": datetime.now().isoformat(),
             "config": config
@@ -1436,477 +2752,20 @@ class ConfigHistory:
         self.history[vm_name].insert(0, entry)
         self.history[vm_name] = self.history[vm_name][:self.max_entries]
         self.save()
-    
+
     def get_history(self, vm_name: str) -> List[Dict]:
         return self.history.get(vm_name, [])
-    
+
     def clear_history(self, vm_name: str):
         if vm_name in self.history:
             del self.history[vm_name]
             self.save()
-    
+
     def restore_entry(self, vm_name: str, index: int) -> Optional[Dict]:
         history = self.get_history(vm_name)
         if 0 <= index < len(history):
             return history[index]["config"]
         return None
-
-# ========== 虚拟机配置类 ==========
-class VMConfig:
-    def __init__(self, name: str = ""):
-        self.name = name
-        self.vm_dir = VMS_DIR / name
-        self.os_type = "Windows"
-        self.os_version = "10"
-        self.arch = "x86_64"
-        self.memory = 4096
-        self.cpu = 4
-        self.disk_size = 64
-        self.disk_format = "qcow2"
-        self.disk_interface = "sata"
-        self.disk_path = ""
-        self.disks: List[Dict] = []
-        self.disk_id_counter = 0
-        self.boot_iso = ""
-        self.kernel_iso = ""
-        self.driver_iso = ""
-        self.created = ""
-        self.cpu_model = "host"
-        self.accel = "hax"
-        self.vga = "virtio"
-        self.display = "gtk"
-        self.resolution = "1920x1080"
-        self.machine_type = "q35"
-        self.acpi = True
-        self.usb = True
-        self.sound = "hda"
-        self.boot_order = "cdrom"
-        self.opengl = True
-        self.nic_model = "virtio"
-        self.qemu_version = "qemu-w64-setup-20251224"
-        self.preset = "Windows 10"
-        self.extra_args = ""
-        self.no_hpet = False
-        self.no_kvm = False
-        self.vnc_port = ""
-        self.smp_threads = 1
-        self.smp_sockets = 1
-        self.share_enabled = False
-        self.share_dir = ""
-        
-        # 高级选项
-        self.cache = "writeback"
-        self.aio = "默认"
-        self.discard = "默认"
-        self.detect_zeroes = "默认"
-        self.backing_file = ""
-        self.snapshot_mode = False
-        self.disk_readonly = False
-        self.hostfwd = ""
-        self.net_subnet = ""
-        self.net_dns = ""
-        self.net_restrict = False
-        self.tap_interface = ""
-        self.mac_address = ""
-        self.cpu_flags = ""
-        self.numa_config = ""
-        self.mem_prealloc = False
-        self.hugepages = False
-        self.no_hpet_adv = False
-        self.no_kvm_nested = False
-        self.force_tcg = False
-        self.usb_tablet = True
-        self.bios_file = ""
-        self.vnc_password = ""
-        self.spice_port = ""
-        self.spice_password = ""
-        self.no_mouse_integration = False
-        self.log_file = ""
-        self.debug_level = "默认"
-        self.qmp_socket = ""
-        self.monitor_stdio = False
-        self.no_reboot = False
-        self.no_shutdown = False
-        self.sandbox = False
-        self.rtc_base = ""
-        self.seed_value = ""
-        self.boot_menu = False
-        self.boot_once = ""
-        self.extra_advanced_args = ""
-        
-        # 自定义硬件
-        self.custom_cpu_vendor = "AuthenticAMD"
-        self.custom_cpu_family = "6"
-        self.custom_cpu_model_id = "94"
-        self.custom_cpu_stepping = "3"
-        self.custom_cpu_level = "0x1"
-        self.custom_cpu_xlevel = "0x80000008"
-        self.custom_cpu_features = "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves"
-        self.custom_gpu_model = "virtio-vga-gl"
-        self.custom_gpu_ram = 256
-        self.custom_gpu_freq = 800
-        self.custom_gpu_vgamem = 64
-        self.custom_nic_model = "virtio-net-pci"
-        self.custom_nic_mac = ""
-        self.custom_nic_queues = 1
-        self.custom_disk_cache = "writeback"
-        self.custom_disk_aio = "native"
-        self.custom_disk_discard = "unmap"
-        self.custom_disk_detect_zeroes = "unmap"
-        self.custom_disk_latency = 0
-        self.custom_audio_model = "ich9-intel-hda"
-        self.custom_audio_codec = "hda-duplex"
-        self.custom_usb_controller = "usb-ehci"
-        self.custom_usb_ports = 6
-        self.custom_pci_bus = "pcie.0"
-        self.custom_pci_slot = 0
-        self.custom_serial = "pty"
-        self.custom_parallel = "none"
-        self.custom_bios = ""
-        self.custom_firmware = ""
-        self.custom_rtc = "utc"
-        
-        # 性能
-        self.cpu_capacity = 100
-        self.cpu_latency = 10
-        self.cpu_quota = 0
-        self.cpu_period = 100000
-        self.gpu_edid = ""
-        self.gpu_rendernode = ""
-        self.gpu_gl_version = "3.3"
-        self.cpu_freq = 0
-        self.cpu_clock = 0
-        
-        # 存储
-        self.storage_type = "file"
-        self.storage_format = "qcow2"
-        self.storage_encryption = False
-        self.storage_encryption_key = ""
-        self.storage_compression = False
-        self.storage_cluster_size = 65536
-        
-        # 安全
-        self.security_selinux = False
-        self.security_apparmor = False
-        self.security_chroot = ""
-        self.security_user = ""
-        
-        # 调试
-        self.trace_events = ""
-        self.log_level = 0
-        self.gdb_port = 1234
-        self.gdb_stop = False
-    
-    def add_disk(self, path: str, size_gb: int, format_type: str = "qcow2", 
-                 interface: str = "sata", cache: str = "writeback", 
-                 backing_file: str = "", readonly: bool = False, 
-                 removable: bool = False) -> Dict:
-        self.disk_id_counter += 1
-        disk = {
-            "id": self.disk_id_counter,
-            "path": path,
-            "size": size_gb,
-            "format": format_type,
-            "interface": interface,
-            "cache": cache,
-            "backing_file": backing_file,
-            "readonly": readonly,
-            "removable": removable
-        }
-        self.disks.append(disk)
-        if len(self.disks) == 1:
-            self.disk_path = path
-            self.disk_size = size_gb
-            self.disk_format = format_type
-            self.disk_interface = interface
-        return disk
-    
-    def remove_disk(self, disk_id: int):
-        self.disks = [d for d in self.disks if d["id"] != disk_id]
-        if self.disks:
-            first = self.disks[0]
-            self.disk_path = first["path"]
-            self.disk_size = first["size"]
-            self.disk_format = first["format"]
-            self.disk_interface = first["interface"]
-        else:
-            self.disk_path = ""
-            self.disk_size = 0
-            self.disk_format = "qcow2"
-            self.disk_interface = "sata"
-    
-    def get_disk(self, disk_id: int) -> Optional[Dict]:
-        for d in self.disks:
-            if d["id"] == disk_id:
-                return d
-        return None
-    
-    def to_dict(self) -> dict:
-        return {
-            "version": CONFIG_VERSION,
-            "name": self.name,
-            "os_type": self.os_type,
-            "os_version": self.os_version,
-            "arch": self.arch,
-            "memory": self.memory,
-            "cpu": self.cpu,
-            "smp_threads": self.smp_threads,
-            "smp_sockets": self.smp_sockets,
-            "disk_size": self.disk_size,
-            "disk_format": self.disk_format,
-            "disk_interface": self.disk_interface,
-            "disk_path": self.disk_path,
-            "disks": self.disks,
-            "disk_id_counter": self.disk_id_counter,
-            "boot_iso": self.boot_iso,
-            "kernel_iso": self.kernel_iso,
-            "driver_iso": self.driver_iso,
-            "created": self.created,
-            "cpu_model": self.cpu_model,
-            "accel": self.accel,
-            "vga": self.vga,
-            "display": self.display,
-            "resolution": self.resolution,
-            "machine_type": self.machine_type,
-            "acpi": self.acpi,
-            "usb": self.usb,
-            "sound": self.sound,
-            "boot_order": self.boot_order,
-            "opengl": self.opengl,
-            "nic_model": self.nic_model,
-            "qemu_version": self.qemu_version,
-            "preset": self.preset,
-            "extra_args": self.extra_args,
-            "no_hpet": self.no_hpet,
-            "no_kvm": self.no_kvm,
-            "vnc_port": self.vnc_port,
-            "share_enabled": self.share_enabled,
-            "share_dir": self.share_dir,
-            "cache": self.cache,
-            "aio": self.aio,
-            "discard": self.discard,
-            "detect_zeroes": self.detect_zeroes,
-            "backing_file": self.backing_file,
-            "snapshot_mode": self.snapshot_mode,
-            "disk_readonly": self.disk_readonly,
-            "hostfwd": self.hostfwd,
-            "net_subnet": self.net_subnet,
-            "net_dns": self.net_dns,
-            "net_restrict": self.net_restrict,
-            "tap_interface": self.tap_interface,
-            "mac_address": self.mac_address,
-            "cpu_flags": self.cpu_flags,
-            "numa_config": self.numa_config,
-            "mem_prealloc": self.mem_prealloc,
-            "hugepages": self.hugepages,
-            "no_hpet_adv": self.no_hpet_adv,
-            "no_kvm_nested": self.no_kvm_nested,
-            "force_tcg": self.force_tcg,
-            "usb_tablet": self.usb_tablet,
-            "bios_file": self.bios_file,
-            "vnc_password": self.vnc_password,
-            "spice_port": self.spice_port,
-            "spice_password": self.spice_password,
-            "no_mouse_integration": self.no_mouse_integration,
-            "log_file": self.log_file,
-            "debug_level": self.debug_level,
-            "qmp_socket": self.qmp_socket,
-            "monitor_stdio": self.monitor_stdio,
-            "no_reboot": self.no_reboot,
-            "no_shutdown": self.no_shutdown,
-            "sandbox": self.sandbox,
-            "rtc_base": self.rtc_base,
-            "seed_value": self.seed_value,
-            "boot_menu": self.boot_menu,
-            "boot_once": self.boot_once,
-            "extra_advanced_args": self.extra_advanced_args,
-            "custom_cpu_vendor": self.custom_cpu_vendor,
-            "custom_cpu_family": self.custom_cpu_family,
-            "custom_cpu_model_id": self.custom_cpu_model_id,
-            "custom_cpu_stepping": self.custom_cpu_stepping,
-            "custom_cpu_level": self.custom_cpu_level,
-            "custom_cpu_xlevel": self.custom_cpu_xlevel,
-            "custom_cpu_features": self.custom_cpu_features,
-            "custom_gpu_model": self.custom_gpu_model,
-            "custom_gpu_ram": self.custom_gpu_ram,
-            "custom_gpu_freq": self.custom_gpu_freq,
-            "custom_gpu_vgamem": self.custom_gpu_vgamem,
-            "custom_nic_model": self.custom_nic_model,
-            "custom_nic_mac": self.custom_nic_mac,
-            "custom_nic_queues": self.custom_nic_queues,
-            "custom_disk_cache": self.custom_disk_cache,
-            "custom_disk_aio": self.custom_disk_aio,
-            "custom_disk_discard": self.custom_disk_discard,
-            "custom_disk_detect_zeroes": self.custom_disk_detect_zeroes,
-            "custom_disk_latency": self.custom_disk_latency,
-            "custom_audio_model": self.custom_audio_model,
-            "custom_audio_codec": self.custom_audio_codec,
-            "custom_usb_controller": self.custom_usb_controller,
-            "custom_usb_ports": self.custom_usb_ports,
-            "custom_pci_bus": self.custom_pci_bus,
-            "custom_pci_slot": self.custom_pci_slot,
-            "custom_serial": self.custom_serial,
-            "custom_parallel": self.custom_parallel,
-            "custom_bios": self.custom_bios,
-            "custom_firmware": self.custom_firmware,
-            "custom_rtc": self.custom_rtc,
-            "cpu_capacity": self.cpu_capacity,
-            "cpu_latency": self.cpu_latency,
-            "cpu_quota": self.cpu_quota,
-            "cpu_period": self.cpu_period,
-            "gpu_edid": self.gpu_edid,
-            "gpu_rendernode": self.gpu_rendernode,
-            "gpu_gl_version": self.gpu_gl_version,
-            "cpu_freq": self.cpu_freq,
-            "cpu_clock": self.cpu_clock,
-            "storage_type": self.storage_type,
-            "storage_format": self.storage_format,
-            "storage_encryption": self.storage_encryption,
-            "storage_encryption_key": self.storage_encryption_key,
-            "storage_compression": self.storage_compression,
-            "storage_cluster_size": self.storage_cluster_size,
-            "security_selinux": self.security_selinux,
-            "security_apparmor": self.security_apparmor,
-            "security_chroot": self.security_chroot,
-            "security_user": self.security_user,
-            "trace_events": self.trace_events,
-            "log_level": self.log_level,
-            "gdb_port": self.gdb_port,
-            "gdb_stop": self.gdb_stop,
-        }
-    
-    @classmethod
-    def from_dict(cls, data: dict) -> 'VMConfig':
-        vm = cls(data.get("name", ""))
-        vm.os_type = data.get("os_type", "Windows")
-        vm.os_version = data.get("os_version", "10")
-        vm.arch = data.get("arch", "x86_64")
-        vm.memory = data.get("memory", 4096)
-        vm.cpu = data.get("cpu", 4)
-        vm.smp_threads = data.get("smp_threads", 1)
-        vm.smp_sockets = data.get("smp_sockets", 1)
-        vm.disk_size = data.get("disk_size", 64)
-        vm.disk_format = data.get("disk_format", "qcow2")
-        vm.disk_interface = data.get("disk_interface", "sata")
-        vm.disk_path = data.get("disk_path", "")
-        vm.disks = data.get("disks", [])
-        vm.disk_id_counter = data.get("disk_id_counter", 0)
-        vm.boot_iso = data.get("boot_iso", "")
-        vm.kernel_iso = data.get("kernel_iso", "")
-        vm.driver_iso = data.get("driver_iso", "")
-        vm.created = data.get("created", "")
-        vm.cpu_model = data.get("cpu_model", "host")
-        vm.accel = data.get("accel", "hax")
-        vm.vga = data.get("vga", "virtio")
-        vm.display = data.get("display", "gtk")
-        vm.resolution = data.get("resolution", "1920x1080")
-        vm.machine_type = data.get("machine_type", "q35")
-        vm.acpi = data.get("acpi", True)
-        vm.usb = data.get("usb", True)
-        vm.sound = data.get("sound", "hda")
-        vm.boot_order = data.get("boot_order", "cdrom")
-        vm.opengl = data.get("opengl", True)
-        vm.nic_model = data.get("nic_model", "virtio")
-        vm.qemu_version = data.get("qemu_version", "qemu-w64-setup-20251224")
-        vm.preset = data.get("preset", "Windows 10")
-        vm.extra_args = data.get("extra_args", "")
-        vm.no_hpet = data.get("no_hpet", False)
-        vm.no_kvm = data.get("no_kvm", False)
-        vm.vnc_port = data.get("vnc_port", "")
-        vm.share_enabled = data.get("share_enabled", False)
-        vm.share_dir = data.get("share_dir", "")
-        vm.cache = data.get("cache", "writeback")
-        vm.aio = data.get("aio", "默认")
-        vm.discard = data.get("discard", "默认")
-        vm.detect_zeroes = data.get("detect_zeroes", "默认")
-        vm.backing_file = data.get("backing_file", "")
-        vm.snapshot_mode = data.get("snapshot_mode", False)
-        vm.disk_readonly = data.get("disk_readonly", False)
-        vm.hostfwd = data.get("hostfwd", "")
-        vm.net_subnet = data.get("net_subnet", "")
-        vm.net_dns = data.get("net_dns", "")
-        vm.net_restrict = data.get("net_restrict", False)
-        vm.tap_interface = data.get("tap_interface", "")
-        vm.mac_address = data.get("mac_address", "")
-        vm.cpu_flags = data.get("cpu_flags", "")
-        vm.numa_config = data.get("numa_config", "")
-        vm.mem_prealloc = data.get("mem_prealloc", False)
-        vm.hugepages = data.get("hugepages", False)
-        vm.no_hpet_adv = data.get("no_hpet_adv", False)
-        vm.no_kvm_nested = data.get("no_kvm_nested", False)
-        vm.force_tcg = data.get("force_tcg", False)
-        vm.usb_tablet = data.get("usb_tablet", True)
-        vm.bios_file = data.get("bios_file", "")
-        vm.vnc_password = data.get("vnc_password", "")
-        vm.spice_port = data.get("spice_port", "")
-        vm.spice_password = data.get("spice_password", "")
-        vm.no_mouse_integration = data.get("no_mouse_integration", False)
-        vm.log_file = data.get("log_file", "")
-        vm.debug_level = data.get("debug_level", "默认")
-        vm.qmp_socket = data.get("qmp_socket", "")
-        vm.monitor_stdio = data.get("monitor_stdio", False)
-        vm.no_reboot = data.get("no_reboot", False)
-        vm.no_shutdown = data.get("no_shutdown", False)
-        vm.sandbox = data.get("sandbox", False)
-        vm.rtc_base = data.get("rtc_base", "")
-        vm.seed_value = data.get("seed_value", "")
-        vm.boot_menu = data.get("boot_menu", False)
-        vm.boot_once = data.get("boot_once", "")
-        vm.extra_advanced_args = data.get("extra_advanced_args", "")
-        vm.custom_cpu_vendor = data.get("custom_cpu_vendor", "AuthenticAMD")
-        vm.custom_cpu_family = data.get("custom_cpu_family", "6")
-        vm.custom_cpu_model_id = data.get("custom_cpu_model_id", "94")
-        vm.custom_cpu_stepping = data.get("custom_cpu_stepping", "3")
-        vm.custom_cpu_level = data.get("custom_cpu_level", "0x1")
-        vm.custom_cpu_xlevel = data.get("custom_cpu_xlevel", "0x80000008")
-        vm.custom_cpu_features = data.get("custom_cpu_features", "+aes,+avx,+avx2,+bmi1,+bmi2,+f16c,+fma,+rdrand,+rdseed,+sha-ni,+xsave,+xsavec,+xsaves")
-        vm.custom_gpu_model = data.get("custom_gpu_model", "virtio-vga-gl")
-        vm.custom_gpu_ram = data.get("custom_gpu_ram", 256)
-        vm.custom_gpu_freq = data.get("custom_gpu_freq", 800)
-        vm.custom_gpu_vgamem = data.get("custom_gpu_vgamem", 64)
-        vm.custom_nic_model = data.get("custom_nic_model", "virtio-net-pci")
-        vm.custom_nic_mac = data.get("custom_nic_mac", "")
-        vm.custom_nic_queues = data.get("custom_nic_queues", 1)
-        vm.custom_disk_cache = data.get("custom_disk_cache", "writeback")
-        vm.custom_disk_aio = data.get("custom_disk_aio", "native")
-        vm.custom_disk_discard = data.get("custom_disk_discard", "unmap")
-        vm.custom_disk_detect_zeroes = data.get("custom_disk_detect_zeroes", "unmap")
-        vm.custom_disk_latency = data.get("custom_disk_latency", 0)
-        vm.custom_audio_model = data.get("custom_audio_model", "ich9-intel-hda")
-        vm.custom_audio_codec = data.get("custom_audio_codec", "hda-duplex")
-        vm.custom_usb_controller = data.get("custom_usb_controller", "usb-ehci")
-        vm.custom_usb_ports = data.get("custom_usb_ports", 6)
-        vm.custom_pci_bus = data.get("custom_pci_bus", "pcie.0")
-        vm.custom_pci_slot = data.get("custom_pci_slot", 0)
-        vm.custom_serial = data.get("custom_serial", "pty")
-        vm.custom_parallel = data.get("custom_parallel", "none")
-        vm.custom_bios = data.get("custom_bios", "")
-        vm.custom_firmware = data.get("custom_firmware", "")
-        vm.custom_rtc = data.get("custom_rtc", "utc")
-        vm.cpu_capacity = data.get("cpu_capacity", 100)
-        vm.cpu_latency = data.get("cpu_latency", 10)
-        vm.cpu_quota = data.get("cpu_quota", 0)
-        vm.cpu_period = data.get("cpu_period", 100000)
-        vm.gpu_edid = data.get("gpu_edid", "")
-        vm.gpu_rendernode = data.get("gpu_rendernode", "")
-        vm.gpu_gl_version = data.get("gpu_gl_version", "3.3")
-        vm.cpu_freq = data.get("cpu_freq", 0)
-        vm.cpu_clock = data.get("cpu_clock", 0)
-        vm.storage_type = data.get("storage_type", "file")
-        vm.storage_format = data.get("storage_format", "qcow2")
-        vm.storage_encryption = data.get("storage_encryption", False)
-        vm.storage_encryption_key = data.get("storage_encryption_key", "")
-        vm.storage_compression = data.get("storage_compression", False)
-        vm.storage_cluster_size = data.get("storage_cluster_size", 65536)
-        vm.security_selinux = data.get("security_selinux", False)
-        vm.security_apparmor = data.get("security_apparmor", False)
-        vm.security_chroot = data.get("security_chroot", "")
-        vm.security_user = data.get("security_user", "")
-        vm.trace_events = data.get("trace_events", "")
-        vm.log_level = data.get("log_level", 0)
-        vm.gdb_port = data.get("gdb_port", 1234)
-        vm.gdb_stop = data.get("gdb_stop", False)
-        return vm
 
 # ========== 自定义硬件对话框 ==========
 class CustomHardwareDialog(QDialog):
@@ -1916,49 +2775,36 @@ class CustomHardwareDialog(QDialog):
         self.parent_dialog = parent
         self.init_ui()
         self.load_data()
-    
+
     def init_ui(self):
         self.setWindowTitle(tr("custom_hw_title", self.vm.name))
         self.setMinimumSize(750, 650)
         self.resize(750, 650)
-        
+
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
-        
+
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabPosition(QTabWidget.North)
         self.tab_widget.setDocumentMode(True)
-        
-        # CPU
+
         cpu_tab = self.create_cpu_custom_tab()
         self.tab_widget.addTab(cpu_tab, tr("custom_hw_cpu"))
-        
-        # GPU
         gpu_tab = self.create_gpu_custom_tab()
         self.tab_widget.addTab(gpu_tab, tr("custom_hw_gpu"))
-        
-        # 网络
         net_tab = self.create_net_custom_tab()
         self.tab_widget.addTab(net_tab, tr("custom_hw_network"))
-        
-        # 存储
         storage_tab = self.create_storage_custom_tab()
         self.tab_widget.addTab(storage_tab, tr("custom_hw_storage"))
-        
-        # 其他硬件
         hw_tab = self.create_hw_custom_tab()
         self.tab_widget.addTab(hw_tab, tr("custom_hw_other"))
-        
-        # 性能
         perf_tab = self.create_perf_custom_tab()
         self.tab_widget.addTab(perf_tab, tr("custom_hw_performance"))
-        
-        # 安全
         sec_tab = self.create_security_tab()
         self.tab_widget.addTab(sec_tab, tr("custom_hw_security"))
-        
+
         layout.addWidget(self.tab_widget, 1)
-        
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         self.save_btn = QPushButton(tr("btn_save"))
@@ -1968,129 +2814,112 @@ class CustomHardwareDialog(QDialog):
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
         layout.addLayout(btn_layout)
-    
+
     def create_cpu_custom_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         layout.addWidget(QLabel(tr("label_cpu_vendor")), row, 0)
         self.cpu_vendor = QComboBox()
         self.cpu_vendor.addItems(["AuthenticAMD", "GenuineIntel", "QEMU", "Unknown"])
         self.cpu_vendor.setEditable(True)
         layout.addWidget(self.cpu_vendor, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_family")), row, 0)
         self.cpu_family = QLineEdit()
         layout.addWidget(self.cpu_family, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_model_id")), row, 0)
         self.cpu_model_id = QLineEdit()
         layout.addWidget(self.cpu_model_id, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_stepping")), row, 0)
         self.cpu_stepping = QLineEdit()
         layout.addWidget(self.cpu_stepping, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_level")), row, 0)
         self.cpu_level = QLineEdit()
         layout.addWidget(self.cpu_level, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_xlevel")), row, 0)
         self.cpu_xlevel = QLineEdit()
         layout.addWidget(self.cpu_xlevel, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_features")), row, 0)
         self.cpu_features = QLineEdit()
         self.cpu_features.setPlaceholderText("+aes,+avx,-hypervisor,...")
         layout.addWidget(self.cpu_features, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_capacity")), row, 0)
         self.cpu_capacity = QSpinBox()
         self.cpu_capacity.setRange(1, 200)
         self.cpu_capacity.setSuffix("%")
         layout.addWidget(self.cpu_capacity, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_latency")), row, 0)
         self.cpu_latency = QSpinBox()
         self.cpu_latency.setRange(0, 1000)
         self.cpu_latency.setSuffix(" µs")
         layout.addWidget(self.cpu_latency, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_quota")), row, 0)
         self.cpu_quota = QSpinBox()
         self.cpu_quota.setRange(0, 200)
         self.cpu_quota.setSuffix("%")
         layout.addWidget(self.cpu_quota, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cpu_period")), row, 0)
         self.cpu_period = QSpinBox()
         self.cpu_period.setRange(1000, 1000000)
         self.cpu_period.setSuffix(" µs")
         layout.addWidget(self.cpu_period, row, 1)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def create_gpu_custom_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         layout.addWidget(QLabel(tr("label_gpu_model")), row, 0)
         self.gpu_model = QComboBox()
-        self.gpu_model.addItems(["virtio-vga-gl", "virtio-gpu-gl", "virtio-vga", "virtio-gpu", 
+        self.gpu_model.addItems(["virtio-vga-gl", "virtio-gpu-gl", "virtio-vga", "virtio-gpu",
                                  "vmvga", "qxl", "std", "cirrus", "bochs", "ramfb", "sga"])
         self.gpu_model.setEditable(True)
         layout.addWidget(self.gpu_model, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gpu_ram")), row, 0)
         self.gpu_ram = QSpinBox()
         self.gpu_ram.setRange(16, 4096)
         self.gpu_ram.setSuffix(" MB")
         layout.addWidget(self.gpu_ram, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gpu_freq")), row, 0)
         self.gpu_freq = QSpinBox()
         self.gpu_freq.setRange(100, 3000)
         self.gpu_freq.setSuffix(" MHz")
         layout.addWidget(self.gpu_freq, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gpu_vgamem")), row, 0)
         self.gpu_vgamem = QSpinBox()
         self.gpu_vgamem.setRange(4, 512)
         self.gpu_vgamem.setSuffix(" MB")
         layout.addWidget(self.gpu_vgamem, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gpu_gl_version")), row, 0)
         self.gpu_gl_version = QComboBox()
         self.gpu_gl_version.addItems(["3.3", "3.0", "2.1", "4.6", "4.5"])
         layout.addWidget(self.gpu_gl_version, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gpu_rendernode")), row, 0)
         self.gpu_rendernode = QLineEdit()
         self.gpu_rendernode.setPlaceholderText("/dev/dri/renderD128")
         layout.addWidget(self.gpu_rendernode, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gpu_edid")), row, 0)
         edid_row = QHBoxLayout()
@@ -2101,113 +2930,97 @@ class CustomHardwareDialog(QDialog):
         browse_btn.clicked.connect(lambda: self.browse_edid())
         edid_row.addWidget(browse_btn)
         layout.addLayout(edid_row, row, 1)
-        
         row += 1
         self.gpu_opengl_check = QCheckBox(tr("check_opengl"))
         self.gpu_opengl_check.setChecked(True)
         layout.addWidget(self.gpu_opengl_check, row, 0, 1, 2)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def create_net_custom_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         layout.addWidget(QLabel(tr("label_nic_model")), row, 0)
         self.nic_model = QComboBox()
         self.nic_model.addItems(["virtio-net-pci", "e1000", "e1000e", "rtl8139", "pcnet", "vmxnet3", "usb-net", "ne2k_pci"])
         self.nic_model.setEditable(True)
         layout.addWidget(self.nic_model, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_nic_queues")), row, 0)
         self.nic_queues = QSpinBox()
         self.nic_queues.setRange(1, 16)
         layout.addWidget(self.nic_queues, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_nic_mac")), row, 0)
         self.nic_mac = QLineEdit()
         self.nic_mac.setPlaceholderText("52:54:00:12:34:56")
         layout.addWidget(self.nic_mac, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_hostfwd")), row, 0)
         self.hostfwd = QLineEdit()
         self.hostfwd.setPlaceholderText("tcp::2222-:22")
         layout.addWidget(self.hostfwd, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_subnet")), row, 0)
         self.net_subnet = QLineEdit()
         self.net_subnet.setPlaceholderText("192.168.1.0/24")
         layout.addWidget(self.net_subnet, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_dns")), row, 0)
         self.net_dns = QLineEdit()
         self.net_dns.setPlaceholderText("8.8.8.8")
         layout.addWidget(self.net_dns, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_tap")), row, 0)
         self.tap_interface = QLineEdit()
         self.tap_interface.setPlaceholderText("tap0")
         layout.addWidget(self.tap_interface, row, 1)
-        
         row += 1
         self.net_restrict_check = QCheckBox(tr("check_net_restrict"))
         layout.addWidget(self.net_restrict_check, row, 0, 1, 2)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def create_storage_custom_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         layout.addWidget(QLabel(tr("label_storage_type")), row, 0)
         self.storage_type = QComboBox()
         self.storage_type.addItems(["file", "block", "iscsi", "nbd", "gluster", "rbd", "ssh"])
         layout.addWidget(self.storage_type, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_storage_format")), row, 0)
         self.storage_format = QComboBox()
         self.storage_format.addItems(DISK_FORMATS)
         layout.addWidget(self.storage_format, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cache")), row, 0)
         self.disk_cache = QComboBox()
         self.disk_cache.addItems(["writeback", "none", "writethrough", "directsync", "unsafe"])
         layout.addWidget(self.disk_cache, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_aio")), row, 0)
         self.disk_aio = QComboBox()
         self.disk_aio.addItems(["native", "threads", "io_uring"])
         layout.addWidget(self.disk_aio, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_discard")), row, 0)
         self.disk_discard = QComboBox()
         self.disk_discard.addItems(["unmap", "ignore", "none"])
         layout.addWidget(self.disk_discard, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_detect_zeroes")), row, 0)
         self.disk_detect_zeroes = QComboBox()
         self.disk_detect_zeroes.addItems(["unmap", "off", "on"])
         layout.addWidget(self.disk_detect_zeroes, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_cluster_size")), row, 0)
         self.cluster_size = QSpinBox()
@@ -2215,74 +3028,63 @@ class CustomHardwareDialog(QDialog):
         self.cluster_size.setSingleStep(4096)
         self.cluster_size.setSuffix(" bytes")
         layout.addWidget(self.cluster_size, row, 1)
-        
         row += 1
         self.encryption_check = QCheckBox(tr("check_encryption"))
         layout.addWidget(self.encryption_check, row, 0, 1, 2)
-        
         row += 1
         self.compression_check = QCheckBox(tr("check_compression"))
         layout.addWidget(self.compression_check, row, 0, 1, 2)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def create_hw_custom_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         layout.addWidget(QLabel(tr("label_audio_model")), row, 0)
         self.audio_model = QComboBox()
         self.audio_model.addItems(["ich9-intel-hda", "hda", "ac97", "sb16", "es1370", "cs4231a", "gus", "pl041", "sga"])
         self.audio_model.setEditable(True)
         layout.addWidget(self.audio_model, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_audio_codec")), row, 0)
         self.audio_codec = QComboBox()
         self.audio_codec.addItems(["hda-duplex", "hda-output", "hda-input", "ac97", "es1370"])
         self.audio_codec.setEditable(True)
         layout.addWidget(self.audio_codec, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_usb_controller")), row, 0)
         self.usb_controller = QComboBox()
         self.usb_controller.addItems(["usb-ehci", "usb-ohci", "usb-uhci", "usb-xhci", "nec-usb-xhci"])
         layout.addWidget(self.usb_controller, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_usb_ports")), row, 0)
         self.usb_ports = QSpinBox()
         self.usb_ports.setRange(0, 32)
         layout.addWidget(self.usb_ports, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_pci_bus")), row, 0)
         self.pci_bus = QLineEdit()
         self.pci_bus.setPlaceholderText("pcie.0")
         layout.addWidget(self.pci_bus, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_pci_slot")), row, 0)
         self.pci_slot = QSpinBox()
         self.pci_slot.setRange(0, 31)
         layout.addWidget(self.pci_slot, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_serial")), row, 0)
         self.serial = QComboBox()
         self.serial.addItems(["pty", "null", "stdio", "file", "tcp", "telnet", "none"])
         layout.addWidget(self.serial, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_parallel")), row, 0)
         self.parallel = QComboBox()
         self.parallel.addItems(["none", "pty", "file", "null"])
         layout.addWidget(self.parallel, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_bios")), row, 0)
         bios_row = QHBoxLayout()
@@ -2293,28 +3095,25 @@ class CustomHardwareDialog(QDialog):
         browse_btn.clicked.connect(lambda: self.browse_bios())
         bios_row.addWidget(browse_btn)
         layout.addLayout(bios_row, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_firmware")), row, 0)
         self.firmware = QLineEdit()
         self.firmware.setPlaceholderText("UEFI.fd")
         layout.addWidget(self.firmware, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_rtc_mode")), row, 0)
         self.rtc = QComboBox()
         self.rtc.addItems(["utc", "localtime", "custom"])
         layout.addWidget(self.rtc, row, 1)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def create_perf_custom_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         layout.addWidget(QLabel(tr("perf_cpu_capacity") + ":"), row, 0)
         self.perf_cpu_capacity = QSlider(Qt.Horizontal)
@@ -2326,7 +3125,7 @@ class CustomHardwareDialog(QDialog):
         self.perf_cpu_capacity_label = QLabel("100%")
         layout.addWidget(self.perf_cpu_capacity_label, row, 2)
         self.perf_cpu_capacity.valueChanged.connect(lambda v: self.perf_cpu_capacity_label.setText(f"{v}%"))
-        
+
         row += 1
         layout.addWidget(QLabel(tr("perf_cpu_latency") + ":"), row, 0)
         self.perf_cpu_latency = QSlider(Qt.Horizontal)
@@ -2338,7 +3137,7 @@ class CustomHardwareDialog(QDialog):
         self.perf_cpu_latency_label = QLabel("10 µs")
         layout.addWidget(self.perf_cpu_latency_label, row, 2)
         self.perf_cpu_latency.valueChanged.connect(lambda v: self.perf_cpu_latency_label.setText(f"{v} µs"))
-        
+
         row += 1
         layout.addWidget(QLabel(tr("perf_gpu_ram") + ":"), row, 0)
         self.perf_gpu_ram = QSlider(Qt.Horizontal)
@@ -2350,7 +3149,7 @@ class CustomHardwareDialog(QDialog):
         self.perf_gpu_ram_label = QLabel("256 MB")
         layout.addWidget(self.perf_gpu_ram_label, row, 2)
         self.perf_gpu_ram.valueChanged.connect(lambda v: self.perf_gpu_ram_label.setText(f"{v} MB"))
-        
+
         row += 1
         layout.addWidget(QLabel(tr("perf_gpu_freq") + ":"), row, 0)
         self.perf_gpu_freq = QSlider(Qt.Horizontal)
@@ -2362,93 +3161,81 @@ class CustomHardwareDialog(QDialog):
         self.perf_gpu_freq_label = QLabel("800 MHz")
         layout.addWidget(self.perf_gpu_freq_label, row, 2)
         self.perf_gpu_freq.valueChanged.connect(lambda v: self.perf_gpu_freq_label.setText(f"{v} MHz"))
-        
+
         row += 1
         layout.addWidget(QLabel(tr("perf_disk_cache") + ":"), row, 0)
         self.perf_disk_cache = QComboBox()
         self.perf_disk_cache.addItems(["writeback", "none", "writethrough", "directsync", "unsafe"])
         layout.addWidget(self.perf_disk_cache, row, 1, 1, 2)
-        
+
         row += 1
         self.mem_prealloc_check = QCheckBox(tr("check_mem_prealloc"))
         layout.addWidget(self.mem_prealloc_check, row, 0, 1, 3)
-        
         row += 1
         self.hugepages_check = QCheckBox(tr("check_hugepages"))
         layout.addWidget(self.hugepages_check, row, 0, 1, 3)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def create_security_tab(self):
         widget = QWidget()
         layout = QGridLayout(widget)
         layout.setVerticalSpacing(6)
         layout.setHorizontalSpacing(8)
-        
+
         row = 0
         self.selinux_check = QCheckBox(tr("check_selinux"))
         layout.addWidget(self.selinux_check, row, 0, 1, 2)
-        
         row += 1
         self.apparmor_check = QCheckBox(tr("check_apparmor"))
         layout.addWidget(self.apparmor_check, row, 0, 1, 2)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_chroot")), row, 0)
         self.chroot = QLineEdit()
         self.chroot.setPlaceholderText("/path/to/chroot")
         layout.addWidget(self.chroot, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_security_user")), row, 0)
         self.security_user = QLineEdit()
         self.security_user.setPlaceholderText("user")
         layout.addWidget(self.security_user, row, 1)
-        
         row += 1
         self.sandbox_check = QCheckBox(tr("check_sandbox"))
         layout.addWidget(self.sandbox_check, row, 0, 1, 2)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_trace_events")), row, 0)
         self.trace_events = QLineEdit()
         self.trace_events.setPlaceholderText("qemu_system_reset,usb_packet")
         layout.addWidget(self.trace_events, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_log_level")), row, 0)
         self.log_level = QSpinBox()
         self.log_level.setRange(0, 10)
         layout.addWidget(self.log_level, row, 1)
-        
         row += 1
         layout.addWidget(QLabel(tr("label_gdb_port")), row, 0)
         self.gdb_port = QSpinBox()
         self.gdb_port.setRange(1, 65535)
         self.gdb_port.setValue(1234)
         layout.addWidget(self.gdb_port, row, 1)
-        
         row += 1
         self.gdb_stop_check = QCheckBox(tr("check_gdb_stop"))
         layout.addWidget(self.gdb_stop_check, row, 0, 1, 2)
-        
         layout.setRowStretch(row + 1, 1)
         return widget
-    
+
     def browse_edid(self):
         path, _ = QFileDialog.getOpenFileName(self, tr("label_gpu_edid_browse"), str(BASE_DIR), "EDID 文件 (*.bin);;所有文件 (*)")
         if path:
             self.gpu_edid.setText(path)
-    
+
     def browse_bios(self):
         path, _ = QFileDialog.getOpenFileName(self, tr("label_bios_browse"), str(BASE_DIR), "BIOS 文件 (*.bin *.rom);;所有文件 (*)")
         if path:
             self.bios.setText(path)
-    
+
     def load_data(self):
         vm = self.vm
-        # CPU
         self.cpu_vendor.setCurrentText(vm.custom_cpu_vendor)
         self.cpu_family.setText(vm.custom_cpu_family)
         self.cpu_model_id.setText(vm.custom_cpu_model_id)
@@ -2460,7 +3247,6 @@ class CustomHardwareDialog(QDialog):
         self.cpu_latency.setValue(vm.cpu_latency)
         self.cpu_quota.setValue(vm.cpu_quota)
         self.cpu_period.setValue(vm.cpu_period)
-        # GPU
         self.gpu_model.setCurrentText(vm.custom_gpu_model)
         self.gpu_ram.setValue(vm.custom_gpu_ram)
         self.gpu_freq.setValue(vm.custom_gpu_freq)
@@ -2469,7 +3255,6 @@ class CustomHardwareDialog(QDialog):
         self.gpu_rendernode.setText(vm.gpu_rendernode)
         self.gpu_edid.setText(vm.gpu_edid)
         self.gpu_opengl_check.setChecked(vm.opengl)
-        # 网络
         self.nic_model.setCurrentText(vm.custom_nic_model)
         self.nic_queues.setValue(vm.custom_nic_queues)
         self.nic_mac.setText(vm.custom_nic_mac)
@@ -2478,7 +3263,6 @@ class CustomHardwareDialog(QDialog):
         self.net_dns.setText(vm.net_dns)
         self.tap_interface.setText(vm.tap_interface)
         self.net_restrict_check.setChecked(vm.net_restrict)
-        # 存储
         self.storage_type.setCurrentText(vm.storage_type)
         self.storage_format.setCurrentText(vm.storage_format)
         self.disk_cache.setCurrentText(vm.custom_disk_cache)
@@ -2488,7 +3272,6 @@ class CustomHardwareDialog(QDialog):
         self.cluster_size.setValue(vm.storage_cluster_size)
         self.encryption_check.setChecked(vm.storage_encryption)
         self.compression_check.setChecked(vm.storage_compression)
-        # 其他硬件
         self.audio_model.setCurrentText(vm.custom_audio_model)
         self.audio_codec.setCurrentText(vm.custom_audio_codec)
         self.usb_controller.setCurrentText(vm.custom_usb_controller)
@@ -2500,7 +3283,6 @@ class CustomHardwareDialog(QDialog):
         self.bios.setText(vm.custom_bios)
         self.firmware.setText(vm.custom_firmware)
         self.rtc.setCurrentText(vm.custom_rtc)
-        # 性能
         self.perf_cpu_capacity.setValue(vm.cpu_capacity)
         self.perf_cpu_capacity_label.setText(f"{vm.cpu_capacity}%")
         self.perf_cpu_latency.setValue(vm.cpu_latency)
@@ -2512,7 +3294,6 @@ class CustomHardwareDialog(QDialog):
         self.perf_disk_cache.setCurrentText(vm.custom_disk_cache)
         self.mem_prealloc_check.setChecked(vm.mem_prealloc)
         self.hugepages_check.setChecked(vm.hugepages)
-        # 安全
         self.selinux_check.setChecked(vm.security_selinux)
         self.apparmor_check.setChecked(vm.security_apparmor)
         self.chroot.setText(vm.security_chroot)
@@ -2522,10 +3303,9 @@ class CustomHardwareDialog(QDialog):
         self.log_level.setValue(vm.log_level)
         self.gdb_port.setValue(vm.gdb_port)
         self.gdb_stop_check.setChecked(vm.gdb_stop)
-    
+
     def save_to_vm(self):
         vm = self.vm
-        # CPU
         vm.custom_cpu_vendor = self.cpu_vendor.currentText()
         vm.custom_cpu_family = self.cpu_family.text().strip()
         vm.custom_cpu_model_id = self.cpu_model_id.text().strip()
@@ -2537,7 +3317,6 @@ class CustomHardwareDialog(QDialog):
         vm.cpu_latency = self.cpu_latency.value()
         vm.cpu_quota = self.cpu_quota.value()
         vm.cpu_period = self.cpu_period.value()
-        # GPU
         vm.custom_gpu_model = self.gpu_model.currentText()
         vm.custom_gpu_ram = self.gpu_ram.value()
         vm.custom_gpu_freq = self.gpu_freq.value()
@@ -2546,7 +3325,6 @@ class CustomHardwareDialog(QDialog):
         vm.gpu_rendernode = self.gpu_rendernode.text().strip()
         vm.gpu_edid = self.gpu_edid.text().strip()
         vm.opengl = self.gpu_opengl_check.isChecked()
-        # 网络
         vm.custom_nic_model = self.nic_model.currentText()
         vm.custom_nic_queues = self.nic_queues.value()
         vm.custom_nic_mac = self.nic_mac.text().strip()
@@ -2555,7 +3333,6 @@ class CustomHardwareDialog(QDialog):
         vm.net_dns = self.net_dns.text().strip()
         vm.tap_interface = self.tap_interface.text().strip()
         vm.net_restrict = self.net_restrict_check.isChecked()
-        # 存储
         vm.storage_type = self.storage_type.currentText()
         vm.storage_format = self.storage_format.currentText()
         vm.custom_disk_cache = self.disk_cache.currentText()
@@ -2565,7 +3342,6 @@ class CustomHardwareDialog(QDialog):
         vm.storage_cluster_size = self.cluster_size.value()
         vm.storage_encryption = self.encryption_check.isChecked()
         vm.storage_compression = self.compression_check.isChecked()
-        # 其他硬件
         vm.custom_audio_model = self.audio_model.currentText()
         vm.custom_audio_codec = self.audio_codec.currentText()
         vm.custom_usb_controller = self.usb_controller.currentText()
@@ -2577,7 +3353,6 @@ class CustomHardwareDialog(QDialog):
         vm.custom_bios = self.bios.text().strip()
         vm.custom_firmware = self.firmware.text().strip()
         vm.custom_rtc = self.rtc.currentText()
-        # 性能
         vm.cpu_capacity = self.perf_cpu_capacity.value()
         vm.cpu_latency = self.perf_cpu_latency.value()
         vm.custom_gpu_ram = self.perf_gpu_ram.value()
@@ -2585,7 +3360,6 @@ class CustomHardwareDialog(QDialog):
         vm.custom_disk_cache = self.perf_disk_cache.currentText()
         vm.mem_prealloc = self.mem_prealloc_check.isChecked()
         vm.hugepages = self.hugepages_check.isChecked()
-        # 安全
         vm.security_selinux = self.selinux_check.isChecked()
         vm.security_apparmor = self.apparmor_check.isChecked()
         vm.security_chroot = self.chroot.text().strip()
@@ -2595,11 +3369,12 @@ class CustomHardwareDialog(QDialog):
         vm.log_level = self.log_level.value()
         vm.gdb_port = self.gdb_port.value()
         vm.gdb_stop = self.gdb_stop_check.isChecked()
-    
+
     def save_and_close(self):
         self.save_to_vm()
         QMessageBox.information(self, tr("success"), tr("custom_hw_saved"))
         self.accept()
+
 
 # ========== 高级选项面板 ==========
 class AdvancedOptionsWidget(QGroupBox):
@@ -2610,18 +3385,16 @@ class AdvancedOptionsWidget(QGroupBox):
         self.parent_dialog = parent
         self._custom_hw_dialog = None
         self._vm_ref = None
-        
+
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(4)
-        
+
         top_layout = QHBoxLayout()
         top_layout.setSpacing(8)
-        
         self.status_label = QLabel(tr("adv_locked"))
         self.status_label.setStyleSheet("color: #FF8A9C; font-weight: bold; font-size: 12px;")
         top_layout.addWidget(self.status_label)
         top_layout.addStretch()
-        
         self.unlock_btn = QPushButton(tr("btn_unlock"))
         self.unlock_btn.setStyleSheet("""
             QPushButton {
@@ -2638,7 +3411,7 @@ class AdvancedOptionsWidget(QGroupBox):
         self.unlock_btn.clicked.connect(self.unlock_advanced)
         top_layout.addWidget(self.unlock_btn)
         main_layout.addLayout(top_layout)
-        
+
         warning_label = QLabel(tr("adv_warning"))
         warning_label.setStyleSheet("""
             QLabel {
@@ -2652,69 +3425,51 @@ class AdvancedOptionsWidget(QGroupBox):
         """)
         warning_label.setWordWrap(True)
         main_layout.addWidget(warning_label)
-        
+
         self.adv_tabs = QTabWidget()
         self.adv_tabs.setTabPosition(QTabWidget.North)
         self.adv_tabs.setDocumentMode(True)
         self.adv_tabs.setEnabled(False)
-        
-        # 磁盘
+
         tab_disk = self.create_disk_tab()
         self.adv_tabs.addTab(tab_disk, tr("tab_disk_adv"))
-        
-        # 网络
         tab_network = self.create_network_tab()
         self.adv_tabs.addTab(tab_network, tr("tab_network"))
-        
-        # CPU
         tab_cpu = self.create_cpu_tab()
         self.adv_tabs.addTab(tab_cpu, tr("tab_cpu_adv"))
-        
-        # 显示
         tab_display = self.create_display_adv_tab()
         self.adv_tabs.addTab(tab_display, tr("tab_display_adv"))
-        
-        # 调试
         tab_debug = self.create_debug_tab()
         self.adv_tabs.addTab(tab_debug, tr("tab_debug"))
-        
-        # 其他
         tab_other = self.create_other_tab()
         self.adv_tabs.addTab(tab_other, tr("tab_other"))
-        
-        # 自定义硬件
         tab_custom_hw = self.create_custom_hw_tab()
         self.adv_tabs.addTab(tab_custom_hw, tr("tab_custom_hw"))
-        
+
         main_layout.addWidget(self.adv_tabs, 1)
-        
+
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         self.reset_btn = QPushButton(tr("btn_reset_adv"))
         self.reset_btn.clicked.connect(self.reset_to_default)
         btn_row.addWidget(self.reset_btn)
         main_layout.addLayout(btn_row)
-    
+
     def unlock_advanced(self):
         if self.warning_acknowledged:
             return
-        
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle(tr("warning"))
         msg_box.setText(tr("adv_unlock_warning"))
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.setDefaultButton(QMessageBox.No)
-        
         reply = msg_box.exec()
-        
         if reply == QMessageBox.Yes:
             self.warning_acknowledged = True
             self.adv_tabs.setEnabled(True)
-            
             self.status_label.setText(tr("adv_unlocked"))
             self.status_label.setStyleSheet("color: #A8E6CF; font-weight: bold; font-size: 12px;")
-            
             self.unlock_btn.setText(tr("btn_unlocked"))
             self.unlock_btn.setStyleSheet("""
                 QPushButton {
@@ -2729,42 +3484,35 @@ class AdvancedOptionsWidget(QGroupBox):
                 QPushButton:hover { background-color: #8CD4B8; }
             """)
             self.unlock_btn.setEnabled(False)
-            
             QMessageBox.information(self, tr("adv_acknowledged"), tr("adv_acknowledged"))
-    
+
     def create_disk_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         grid = QGridLayout()
         grid.setVerticalSpacing(5)
         grid.setHorizontalSpacing(8)
-        
         row = 0
         grid.addWidget(QLabel(tr("label_cache")), row, 0)
         self.cache_combo = QComboBox()
         self.cache_combo.addItems(["writeback", "none", "writethrough", "directsync", "unsafe"])
         grid.addWidget(self.cache_combo, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_aio")), row, 0)
         self.aio_combo = QComboBox()
         self.aio_combo.addItems(["默认", "native", "threads", "io_uring"])
         grid.addWidget(self.aio_combo, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_discard")), row, 0)
         self.discard_combo = QComboBox()
         self.discard_combo.addItems(["默认", "on", "off"])
         grid.addWidget(self.discard_combo, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_detect_zeroes")), row, 0)
         self.detect_zeroes_combo = QComboBox()
         self.detect_zeroes_combo.addItems(["默认", "on", "off"])
         grid.addWidget(self.detect_zeroes_combo, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_backing")), row, 0)
         backing_row = QHBoxLayout()
@@ -2775,130 +3523,106 @@ class AdvancedOptionsWidget(QGroupBox):
         self.backing_browse_btn.clicked.connect(lambda: self.browse_backing_file())
         backing_row.addWidget(self.backing_browse_btn)
         grid.addLayout(backing_row, row, 1)
-        
         row += 1
         self.snapshot_check = QCheckBox(tr("check_snapshot"))
         grid.addWidget(self.snapshot_check, row, 0, 1, 2)
-        
         row += 1
         self.disk_readonly_check = QCheckBox(tr("check_readonly"))
         grid.addWidget(self.disk_readonly_check, row, 0, 1, 2)
-        
         layout.addLayout(grid)
         layout.addStretch()
         return widget
-    
+
     def create_network_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         grid = QGridLayout()
         grid.setVerticalSpacing(5)
         grid.setHorizontalSpacing(8)
-        
         row = 0
         grid.addWidget(QLabel(tr("label_hostfwd")), row, 0)
         self.hostfwd_edit = QLineEdit()
         self.hostfwd_edit.setPlaceholderText("例: tcp::2222-:22")
         grid.addWidget(self.hostfwd_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_subnet")), row, 0)
         self.net_subnet_edit = QLineEdit()
         self.net_subnet_edit.setPlaceholderText("例: 192.168.1.0/24")
         grid.addWidget(self.net_subnet_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_dns")), row, 0)
         self.net_dns_edit = QLineEdit()
         self.net_dns_edit.setPlaceholderText("例: 8.8.8.8")
         grid.addWidget(self.net_dns_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_tap")), row, 0)
         self.tap_edit = QLineEdit()
         self.tap_edit.setPlaceholderText("例: tap0")
         grid.addWidget(self.tap_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_mac")), row, 0)
         self.mac_edit = QLineEdit()
         self.mac_edit.setPlaceholderText("例: 52:54:00:12:34:56")
         grid.addWidget(self.mac_edit, row, 1)
-        
         row += 1
         self.net_restrict_check = QCheckBox(tr("check_net_restrict"))
         grid.addWidget(self.net_restrict_check, row, 0, 1, 2)
-        
         layout.addLayout(grid)
         layout.addStretch()
         return widget
-    
+
     def create_cpu_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         grid = QGridLayout()
         grid.setVerticalSpacing(5)
         grid.setHorizontalSpacing(8)
-        
         row = 0
         grid.addWidget(QLabel(tr("label_cpu_flags")), row, 0)
         self.cpu_flags_edit = QLineEdit()
         self.cpu_flags_edit.setPlaceholderText("例: +aes,+avx,-hypervisor")
         grid.addWidget(self.cpu_flags_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_numa")), row, 0)
         self.numa_edit = QLineEdit()
         self.numa_edit.setPlaceholderText("例: node,cpus=0-3,mem=4096")
         grid.addWidget(self.numa_edit, row, 1)
-        
         row += 1
         self.mem_prealloc_check = QCheckBox(tr("check_mem_prealloc"))
         grid.addWidget(self.mem_prealloc_check, row, 0, 1, 2)
-        
         row += 1
         self.hugepages_check = QCheckBox(tr("check_hugepages"))
         grid.addWidget(self.hugepages_check, row, 0, 1, 2)
-        
         row += 1
         self.no_hpet_adv_check = QCheckBox(tr("check_no_hpet"))
         grid.addWidget(self.no_hpet_adv_check, row, 0, 1, 2)
-        
         row += 1
         self.no_kvm_nested_check = QCheckBox(tr("check_no_kvm_nested"))
         grid.addWidget(self.no_kvm_nested_check, row, 0, 1, 2)
-        
         row += 1
         self.force_tcg_check = QCheckBox(tr("check_force_tcg"))
         self.force_tcg_check.setStyleSheet("QCheckBox { color: #FF8A9C; }")
         grid.addWidget(self.force_tcg_check, row, 0, 1, 2)
-        
         layout.addLayout(grid)
         layout.addStretch()
         return widget
-    
+
     def create_display_adv_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         grid = QGridLayout()
         grid.setVerticalSpacing(5)
         grid.setHorizontalSpacing(8)
-        
         row = 0
         self.usb_tablet_check = QCheckBox(tr("check_usb_tablet"))
         self.usb_tablet_check.setChecked(True)
         grid.addWidget(self.usb_tablet_check, row, 0, 1, 2)
-        
         row += 1
         self.no_mouse_integration_check = QCheckBox(tr("check_no_mouse"))
         grid.addWidget(self.no_mouse_integration_check, row, 0, 1, 2)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_bios")), row, 0)
         bios_row = QHBoxLayout()
@@ -2909,40 +3633,34 @@ class AdvancedOptionsWidget(QGroupBox):
         self.bios_browse_btn.clicked.connect(lambda: self.browse_bios_file())
         bios_row.addWidget(self.bios_browse_btn)
         grid.addLayout(bios_row, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_vnc_password")), row, 0)
         self.vnc_password_edit = QLineEdit()
         self.vnc_password_edit.setEchoMode(QLineEdit.Password)
         self.vnc_password_edit.setPlaceholderText("留空无密码")
         grid.addWidget(self.vnc_password_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_spice_port")), row, 0)
         self.spice_port_edit = QLineEdit()
         self.spice_port_edit.setPlaceholderText("例: 5900")
         grid.addWidget(self.spice_port_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_spice_password")), row, 0)
         self.spice_password_edit = QLineEdit()
         self.spice_password_edit.setEchoMode(QLineEdit.Password)
         self.spice_password_edit.setPlaceholderText("留空无密码")
         grid.addWidget(self.spice_password_edit, row, 1)
-        
         layout.addLayout(grid)
         layout.addStretch()
         return widget
-    
+
     def create_debug_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         grid = QGridLayout()
         grid.setVerticalSpacing(5)
         grid.setHorizontalSpacing(8)
-        
         row = 0
         grid.addWidget(QLabel(tr("label_log_file")), row, 0)
         log_row = QHBoxLayout()
@@ -2953,91 +3671,75 @@ class AdvancedOptionsWidget(QGroupBox):
         self.log_browse_btn.clicked.connect(lambda: self.browse_log_file())
         log_row.addWidget(self.log_browse_btn)
         grid.addLayout(log_row, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_debug_level")), row, 0)
         self.debug_combo = QComboBox()
         self.debug_combo.addItems(["默认", "cpu", "exec", "int", "mmu", "pci", "qmp", "all"])
         grid.addWidget(self.debug_combo, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_qmp_socket")), row, 0)
         self.qmp_edit = QLineEdit()
         self.qmp_edit.setPlaceholderText("例: /tmp/qmp.sock")
         grid.addWidget(self.qmp_edit, row, 1)
-        
         row += 1
         self.monitor_stdio_check = QCheckBox(tr("check_monitor_stdio"))
         grid.addWidget(self.monitor_stdio_check, row, 0, 1, 2)
-        
         row += 1
         self.no_reboot_check = QCheckBox(tr("check_no_reboot"))
         grid.addWidget(self.no_reboot_check, row, 0, 1, 2)
-        
         row += 1
         self.no_shutdown_check = QCheckBox(tr("check_no_shutdown"))
         grid.addWidget(self.no_shutdown_check, row, 0, 1, 2)
-        
         row += 1
         self.sandbox_check = QCheckBox(tr("check_sandbox"))
         grid.addWidget(self.sandbox_check, row, 0, 1, 2)
-        
         layout.addLayout(grid)
         layout.addStretch()
         return widget
-    
+
     def create_other_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         grid = QGridLayout()
         grid.setVerticalSpacing(5)
         grid.setHorizontalSpacing(8)
-        
         row = 0
         grid.addWidget(QLabel(tr("label_rtc")), row, 0)
         self.rtc_edit = QLineEdit()
         self.rtc_edit.setPlaceholderText("例: 2020-01-01T00:00:00")
         grid.addWidget(self.rtc_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_seed")), row, 0)
         self.seed_edit = QLineEdit()
         self.seed_edit.setPlaceholderText("例: 0xdeadbeef")
         grid.addWidget(self.seed_edit, row, 1)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_boot_once")), row, 0)
         self.boot_once_edit = QLineEdit()
         self.boot_once_edit.setPlaceholderText("例: cdrom")
         grid.addWidget(self.boot_once_edit, row, 1)
-        
         row += 1
         self.boot_menu_check = QCheckBox(tr("check_boot_menu"))
         grid.addWidget(self.boot_menu_check, row, 0, 1, 2)
-        
         row += 1
         grid.addWidget(QLabel(tr("label_extra_adv")), row, 0)
         self.extra_adv_edit = QTextEdit()
         self.extra_adv_edit.setPlaceholderText("每行一个 QEMU 参数")
         self.extra_adv_edit.setMaximumHeight(60)
         grid.addWidget(self.extra_adv_edit, row, 1)
-        
         layout.addLayout(grid)
         layout.addStretch()
         return widget
-    
+
     def create_custom_hw_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(4)
-        
         info_label = QLabel(tr("msg_custom_hw"))
         info_label.setStyleSheet("color: #888; font-size: 11px; padding: 8px; background: #FFF3E0; border-radius: 10px;")
         info_label.setWordWrap(True)
         layout.addWidget(info_label)
-        
         self.custom_hw_btn = QPushButton(tr("tab_custom_hw"))
         self.custom_hw_btn.setMinimumHeight(32)
         self.custom_hw_btn.setStyleSheet("""
@@ -3053,16 +3755,14 @@ class AdvancedOptionsWidget(QGroupBox):
         """)
         self.custom_hw_btn.clicked.connect(self.open_custom_hw)
         layout.addWidget(self.custom_hw_btn)
-        
         layout.addStretch()
         return widget
-    
+
     def open_custom_hw(self):
         if self._custom_hw_dialog:
             self._custom_hw_dialog.raise_()
             self._custom_hw_dialog.activateWindow()
             return
-        
         vm = self._vm_ref
         if not vm:
             parent = self.parent_dialog
@@ -3070,38 +3770,36 @@ class AdvancedOptionsWidget(QGroupBox):
                 vm = parent.vm
             elif hasattr(parent, 'existing_vm'):
                 vm = parent.existing_vm
-        
         if vm:
             self._custom_hw_dialog = CustomHardwareDialog(vm, self)
             self._custom_hw_dialog.finished.connect(self._custom_hw_closed)
             self._custom_hw_dialog.show()
-    
+
     def _custom_hw_closed(self):
         self._custom_hw_dialog = None
-    
+
     def set_vm_ref(self, vm: VMConfig):
         self._vm_ref = vm
-    
+
     def browse_log_file(self):
         path, _ = QFileDialog.getSaveFileName(self, tr("label_log_file"), str(BASE_DIR), "日志文件 (*.log);;所有文件 (*)")
         if path:
             self.log_edit.setText(path)
-    
+
     def browse_bios_file(self):
         path, _ = QFileDialog.getOpenFileName(self, tr("label_bios_browse"), str(BASE_DIR), "BIOS 文件 (*.bin *.rom);;所有文件 (*)")
         if path:
             self.bios_edit.setText(path)
-    
+
     def browse_backing_file(self):
         path, _ = QFileDialog.getOpenFileName(self, tr("label_backing"), str(VMS_DIR), "磁盘镜像 (*.qcow2 *.img *.raw *.vmdk);;所有文件 (*)")
         if path:
             self.backing_edit.setText(path)
-    
+
     def reset_to_default(self):
         reply = QMessageBox.question(self, tr("confirm"), tr("adv_reset_confirm"), QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        
         self.cache_combo.setCurrentText("writeback")
         self.aio_combo.setCurrentText("默认")
         self.discard_combo.setCurrentText("默认")
@@ -3140,9 +3838,8 @@ class AdvancedOptionsWidget(QGroupBox):
         self.boot_once_edit.setText("")
         self.boot_menu_check.setChecked(False)
         self.extra_adv_edit.setText("")
-        
         QMessageBox.information(self, tr("adv_reset_done"), tr("adv_reset_ok"))
-    
+
     def get_config(self) -> dict:
         return {
             "cache": self.cache_combo.currentText(),
@@ -3184,7 +3881,7 @@ class AdvancedOptionsWidget(QGroupBox):
             "boot_once": self.boot_once_edit.text().strip(),
             "extra_advanced_args": self.extra_adv_edit.toPlainText().strip(),
         }
-    
+
     def set_config(self, config: dict):
         if not config:
             return
@@ -3230,6 +3927,56 @@ class AdvancedOptionsWidget(QGroupBox):
         except Exception as e:
             print(f"⚠️ 加载高级配置时出错: {e}")
 
+# ========== 声卡参数生成函数（自动适配新旧版本） ==========
+def get_sound_params(year: int, config_sound: str, os_type: str, arch: str, 
+                     features: dict) -> List[str]:
+    """自动适配新旧版本的声卡参数"""
+    if config_sound == "none" or os_type == "Android" or arch not in ["x86", "x86_64"]:
+        return []
+    
+    # 检测是否支持 audiodev (新版 QEMU 5.1+)
+    supports_audiodev = features.get("audiodev", False)
+    
+    # ===== 新版 QEMU (2021+): 使用 audiodev + device =====
+    if supports_audiodev:
+        # Windows 用 dsound，Linux/macOS 用 pa/coreaudio
+        if sys.platform == "win32":
+            audio_backend = "dsound"
+        elif sys.platform == "darwin":
+            audio_backend = "coreaudio"
+        else:
+            audio_backend = "pa"  # PulseAudio
+        
+        if config_sound == "ac97":
+            return [
+                "-audiodev", f"{audio_backend},id=audio0",
+                "-device", "AC97,audiodev=audio0"
+            ]
+        elif config_sound == "sb16":
+            return [
+                "-audiodev", f"{audio_backend},id=audio0",
+                "-device", "sb16,audiodev=audio0"
+            ]
+        else:
+            # 默认 hda (Intel HDA)
+            return [
+                "-audiodev", f"{audio_backend},id=audio0",
+                "-device", "intel-hda",
+                "-device", "hda-duplex,audiodev=audio0"
+            ]
+    
+    # ===== 旧版 QEMU (2020 及之前): 使用 soundhw =====
+    if year <= 2013:
+        return ["-soundhw", "sb16"]
+    elif year <= 2019:
+        return ["-soundhw", "ac97"]
+    else:
+        # 2020 过渡版本，但 audiodev 不支持
+        if config_sound == "ac97":
+            return ["-soundhw", "ac97"]
+        else:
+            return ["-soundhw", "hda"]
+
 # ========== 创建/编辑虚拟机对话框 ==========
 class CreateVMDialog(QDialog):
     def __init__(self, parent=None, existing_vm: VMConfig = None):
@@ -3253,52 +4000,49 @@ class CreateVMDialog(QDialog):
             self.setWindowTitle(tr("btn_new"))
             self.create_btn.setText(tr("btn_create"))
         self.on_qemu_version_changed()
-    
+        self.load_hardware_profiles()
+
     def init_ui(self):
-        # 大字体微软雅黑
         font = QFont("Microsoft YaHei", 12)
         self.setFont(font)
-        
-        self.setMinimumSize(950, 800)
-        self.resize(950, 800)
-        
+        self.setMinimumSize(1100, 850)
+        self.resize(1100, 850)
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(8)
         main_layout.setContentsMargins(12, 12, 12, 12)
-        
+
         self.tab_widget = QTabWidget()
         self.tab_widget.setFont(font)
-        
-        # 基本
+
         tab_basic = self.create_basic_tab()
         self.tab_widget.addTab(tab_basic, tr("tab_basic"))
-        
-        # 硬件
+
         tab_hardware = self.create_hardware_tab()
         self.tab_widget.addTab(tab_hardware, tr("tab_hardware"))
-        
-        # 显示
+
         tab_display = self.create_display_tab()
         self.tab_widget.addTab(tab_display, tr("tab_display"))
-        
-        # 高级
+
+        tab_network = self.create_network_tab()
+        self.tab_widget.addTab(tab_network, "🌐 " + tr("tab_network"))
+
         self.advanced_widget = AdvancedOptionsWidget(self)
         self.advanced_widget.set_vm_ref(self.vm)
         tab_advanced = QWidget()
         adv_layout = QVBoxLayout(tab_advanced)
         adv_layout.addWidget(self.advanced_widget)
         self.tab_widget.addTab(tab_advanced, tr("tab_advanced"))
-        
+
         main_layout.addWidget(self.tab_widget, 1)
-        
+
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        
+
         self.history_btn = QPushButton("📜 " + tr("history_title", ""))
         self.history_btn.setMinimumHeight(34)
         self.history_btn.clicked.connect(self.show_history)
         btn_layout.addWidget(self.history_btn)
-        
+
         self.create_btn = QPushButton(tr("btn_create"))
         self.create_btn.setMinimumHeight(40)
         self.create_btn.setMinimumWidth(120)
@@ -3316,7 +4060,7 @@ class CreateVMDialog(QDialog):
         """)
         self.create_btn.clicked.connect(self.save)
         btn_layout.addWidget(self.create_btn)
-        
+
         self.cancel_btn = QPushButton(tr("btn_cancel"))
         self.cancel_btn.setMinimumHeight(40)
         self.cancel_btn.setMinimumWidth(100)
@@ -3333,15 +4077,15 @@ class CreateVMDialog(QDialog):
         """)
         self.cancel_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.cancel_btn)
+
         main_layout.addLayout(btn_layout)
-    
+
     def create_basic_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 12, 12, 12)
-        
-        # 预设
+
         preset_group = QGroupBox("🏷️ " + tr("label_preset"))
         preset_group.setFont(QFont("Microsoft YaHei", 12))
         preset_layout = QVBoxLayout(preset_group)
@@ -3364,14 +4108,13 @@ class CreateVMDialog(QDialog):
         self.preset_desc.setWordWrap(True)
         preset_layout.addWidget(self.preset_desc)
         layout.addWidget(preset_group)
-        
-        # 基本信息
+
         basic_group = QGroupBox(tr("tab_basic"))
         basic_group.setFont(QFont("Microsoft YaHei", 12))
         grid = QGridLayout(basic_group)
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
-        
+
         row = 0
         grid.addWidget(QLabel(tr("label_name")), row, 0)
         self.name_edit = QLineEdit()
@@ -3379,7 +4122,7 @@ class CreateVMDialog(QDialog):
         self.name_edit.setFont(QFont("Microsoft YaHei", 12))
         self.name_edit.setPlaceholderText("输入名称（英文或数字）")
         grid.addWidget(self.name_edit, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_os_type")), row, 0)
         self.os_combo = QComboBox()
@@ -3387,7 +4130,7 @@ class CreateVMDialog(QDialog):
         self.os_combo.setFont(QFont("Microsoft YaHei", 12))
         self.os_combo.addItems(["Windows", "Linux", "Android", "macOS", "其他"])
         grid.addWidget(self.os_combo, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_os_version")), row, 0)
         self.version_combo = QComboBox()
@@ -3395,7 +4138,7 @@ class CreateVMDialog(QDialog):
         self.version_combo.setFont(QFont("Microsoft YaHei", 12))
         self.version_combo.addItems(["XP", "7", "8.1", "10", "11", "Server", "Ubuntu", "Debian", "Fedora", "Android", "Catalina", "FreeBSD", "其他"])
         grid.addWidget(self.version_combo, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_arch")), row, 0)
         self.arch_combo = QComboBox()
@@ -3403,7 +4146,7 @@ class CreateVMDialog(QDialog):
         self.arch_combo.setFont(QFont("Microsoft YaHei", 12))
         self.arch_combo.addItems(["x86", "x86_64", "ARM64"])
         grid.addWidget(self.arch_combo, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_qemu_version")), row, 0)
         self.qemu_version_combo = QComboBox()
@@ -3416,29 +4159,27 @@ class CreateVMDialog(QDialog):
             self.qemu_version_combo.addItem("未检测到 QEMU")
         self.qemu_version_combo.currentTextChanged.connect(self.on_qemu_version_changed)
         grid.addWidget(self.qemu_version_combo, row, 1)
-        
-        # QEMU硬件信息
+
         self.hw_info_label = QLabel("🔍 点击刷新检测硬件")
         self.hw_info_label.setStyleSheet("color: #888; font-size: 11px; padding: 4px;")
         grid.addWidget(self.hw_info_label, row + 1, 0, 1, 2)
-        
+
         layout.addWidget(basic_group)
         layout.addStretch()
         return widget
-    
+
     def create_hardware_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 12, 12, 12)
-        
-        # CPU/内存
+
         cpu_group = QGroupBox(tr("tab_cpu_adv"))
         cpu_group.setFont(QFont("Microsoft YaHei", 12))
         grid = QGridLayout(cpu_group)
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
-        
+
         row = 0
         grid.addWidget(QLabel(tr("label_memory")), row, 0)
         self.memory_spin = QSpinBox()
@@ -3447,7 +4188,7 @@ class CreateVMDialog(QDialog):
         self.memory_spin.setRange(128, 65536)
         self.memory_spin.setSingleStep(512)
         grid.addWidget(self.memory_spin, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_cpu_cores")), row, 0)
         self.cpu_spin = QSpinBox()
@@ -3455,7 +4196,7 @@ class CreateVMDialog(QDialog):
         self.cpu_spin.setFont(QFont("Microsoft YaHei", 12))
         self.cpu_spin.setRange(1, 32)
         grid.addWidget(self.cpu_spin, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_cpu_threads")), row, 0)
         self.smp_threads_spin = QSpinBox()
@@ -3463,7 +4204,7 @@ class CreateVMDialog(QDialog):
         self.smp_threads_spin.setFont(QFont("Microsoft YaHei", 12))
         self.smp_threads_spin.setRange(1, 8)
         grid.addWidget(self.smp_threads_spin, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_cpu_sockets")), row, 0)
         self.smp_sockets_spin = QSpinBox()
@@ -3471,16 +4212,15 @@ class CreateVMDialog(QDialog):
         self.smp_sockets_spin.setFont(QFont("Microsoft YaHei", 12))
         self.smp_sockets_spin.setRange(1, 4)
         grid.addWidget(self.smp_sockets_spin, row, 1)
-        
+
         layout.addWidget(cpu_group)
-        
-        # 磁盘
+
         disk_group = QGroupBox(tr("tab_disk_adv"))
         disk_group.setFont(QFont("Microsoft YaHei", 12))
         disk_layout = QGridLayout(disk_group)
         disk_layout.setVerticalSpacing(8)
         disk_layout.setHorizontalSpacing(12)
-        
+
         row = 0
         disk_layout.addWidget(QLabel(tr("label_disk_size")), row, 0)
         self.disk_spin = QSpinBox()
@@ -3489,7 +4229,7 @@ class CreateVMDialog(QDialog):
         self.disk_spin.setRange(1, 1024)
         disk_layout.addWidget(self.disk_spin, row, 1)
         disk_layout.addWidget(QLabel(" GB"), row, 2)
-        
+
         row += 1
         disk_layout.addWidget(QLabel(tr("label_disk_format")), row, 0)
         self.disk_format_combo = QComboBox()
@@ -3498,7 +4238,7 @@ class CreateVMDialog(QDialog):
         self.disk_format_combo.addItems(DISK_FORMATS)
         self.disk_format_combo.setCurrentText("qcow2")
         disk_layout.addWidget(self.disk_format_combo, row, 1, 1, 2)
-        
+
         row += 1
         disk_layout.addWidget(QLabel(tr("label_disk_interface")), row, 0)
         self.disk_interface_combo = QComboBox()
@@ -3507,24 +4247,38 @@ class CreateVMDialog(QDialog):
         self.disk_interface_combo.addItems(DISK_INTERFACES)
         self.disk_interface_combo.setCurrentText("sata")
         disk_layout.addWidget(self.disk_interface_combo, row, 1, 1, 2)
-        
+
         layout.addWidget(disk_group)
-        
-        # 硬件
+
         hw_group = QGroupBox(tr("tab_hardware"))
         hw_group.setFont(QFont("Microsoft YaHei", 12))
         grid2 = QGridLayout(hw_group)
         grid2.setVerticalSpacing(8)
         grid2.setHorizontalSpacing(12)
-        
+
         row = 0
         grid2.addWidget(QLabel(tr("label_cpu_model")), row, 0)
         self.cpu_model_combo = QComboBox()
         self.cpu_model_combo.setMinimumHeight(32)
         self.cpu_model_combo.setFont(QFont("Microsoft YaHei", 12))
-        self.cpu_model_combo.addItems(CPU_MODELS)
+        # ===== 强制添加所有常见 CPU 型号（最高优先级） =====
+        self.cpu_model_combo.addItems(FORCE_CPU_MODELS)
         grid2.addWidget(self.cpu_model_combo, row, 1)
-        
+
+        row += 1
+        grid2.addWidget(QLabel(tr("label_cpu_profile")), row, 0)
+        profile_layout = QHBoxLayout()
+        self.cpu_profile_combo = QComboBox()
+        self.cpu_profile_combo.setMinimumHeight(32)
+        self.cpu_profile_combo.setFont(QFont("Microsoft YaHei", 12))
+        profile_layout.addWidget(self.cpu_profile_combo, 1)
+        self.profile_mgr_btn = QPushButton("⚙️")
+        self.profile_mgr_btn.setFixedSize(32, 32)
+        self.profile_mgr_btn.setToolTip("管理硬件配置")
+        self.profile_mgr_btn.clicked.connect(self.open_hardware_profile_manager)
+        profile_layout.addWidget(self.profile_mgr_btn)
+        grid2.addLayout(profile_layout, row, 1)
+
         row += 1
         grid2.addWidget(QLabel(tr("label_accel")), row, 0)
         self.accel_combo = QComboBox()
@@ -3538,12 +4292,10 @@ class CreateVMDialog(QDialog):
             if idx >= 0:
                 self.accel_combo.setCurrentIndex(idx)
         grid2.addWidget(self.accel_combo, row, 1)
-        
-        # 加速状态显示
         self.accel_status_label = QLabel("")
         self.accel_status_label.setStyleSheet("color: #6a9a6a; font-size: 11px;")
         grid2.addWidget(self.accel_status_label, row + 1, 0, 1, 2)
-        
+
         row += 1
         grid2.addWidget(QLabel(tr("label_machine")), row, 0)
         self.machine_combo = QComboBox()
@@ -3551,30 +4303,29 @@ class CreateVMDialog(QDialog):
         self.machine_combo.setFont(QFont("Microsoft YaHei", 12))
         self.machine_combo.addItems(MACHINE_TYPES)
         grid2.addWidget(self.machine_combo, row, 1)
-        
+
         row += 1
         self.acpi_check = QCheckBox(tr("check_acpi"))
         self.acpi_check.setFont(QFont("Microsoft YaHei", 12))
         self.acpi_check.setChecked(True)
         grid2.addWidget(self.acpi_check, row, 0, 1, 2)
-        
+
         layout.addWidget(hw_group)
         layout.addStretch()
         return widget
-    
+
     def create_display_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 12, 12, 12)
-        
-        # 显示
+
         display_group = QGroupBox(tr("tab_display_adv"))
         display_group.setFont(QFont("Microsoft YaHei", 12))
         grid = QGridLayout(display_group)
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
-        
+
         row = 0
         grid.addWidget(QLabel(tr("label_vga")), row, 0)
         self.vga_combo = QComboBox()
@@ -3582,7 +4333,7 @@ class CreateVMDialog(QDialog):
         self.vga_combo.setFont(QFont("Microsoft YaHei", 12))
         self.vga_combo.addItems(VGA_TYPES)
         grid.addWidget(self.vga_combo, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_display")), row, 0)
         self.display_combo = QComboBox()
@@ -3590,7 +4341,7 @@ class CreateVMDialog(QDialog):
         self.display_combo.setFont(QFont("Microsoft YaHei", 12))
         self.display_combo.addItems(DISPLAY_TYPES)
         grid.addWidget(self.display_combo, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_resolution")), row, 0)
         self.resolution_combo = QComboBox()
@@ -3598,7 +4349,7 @@ class CreateVMDialog(QDialog):
         self.resolution_combo.setFont(QFont("Microsoft YaHei", 12))
         self.resolution_combo.addItems(RESOLUTIONS)
         grid.addWidget(self.resolution_combo, row, 1)
-        
+
         row += 1
         grid.addWidget(QLabel(tr("label_vnc_port")), row, 0)
         self.vnc_edit = QLineEdit()
@@ -3606,21 +4357,20 @@ class CreateVMDialog(QDialog):
         self.vnc_edit.setFont(QFont("Microsoft YaHei", 12))
         self.vnc_edit.setPlaceholderText("留空使用 GTK，输入 :0 使用 VNC")
         grid.addWidget(self.vnc_edit, row, 1)
-        
+
         row += 1
         self.opengl_check = QCheckBox(tr("check_opengl"))
         self.opengl_check.setFont(QFont("Microsoft YaHei", 12))
         grid.addWidget(self.opengl_check, row, 0, 1, 2)
-        
+
         layout.addWidget(display_group)
-        
-        # 声音/网络
+
         sound_group = QGroupBox(tr("tab_display"))
         sound_group.setFont(QFont("Microsoft YaHei", 12))
         grid2 = QGridLayout(sound_group)
         grid2.setVerticalSpacing(8)
         grid2.setHorizontalSpacing(12)
-        
+
         row = 0
         grid2.addWidget(QLabel(tr("label_sound")), row, 0)
         self.sound_combo = QComboBox()
@@ -3628,7 +4378,7 @@ class CreateVMDialog(QDialog):
         self.sound_combo.setFont(QFont("Microsoft YaHei", 12))
         self.sound_combo.addItems(SOUND_TYPES)
         grid2.addWidget(self.sound_combo, row, 1)
-        
+
         row += 1
         grid2.addWidget(QLabel(tr("label_nic")), row, 0)
         self.nic_combo = QComboBox()
@@ -3636,7 +4386,7 @@ class CreateVMDialog(QDialog):
         self.nic_combo.setFont(QFont("Microsoft YaHei", 12))
         self.nic_combo.addItems(NIC_TYPES)
         grid2.addWidget(self.nic_combo, row, 1)
-        
+
         row += 1
         grid2.addWidget(QLabel(tr("label_boot_order")), row, 0)
         self.boot_combo = QComboBox()
@@ -3644,28 +4394,27 @@ class CreateVMDialog(QDialog):
         self.boot_combo.setFont(QFont("Microsoft YaHei", 12))
         self.boot_combo.addItems(BOOT_TYPES)
         grid2.addWidget(self.boot_combo, row, 1)
-        
+
         row += 1
         self.usb_check = QCheckBox(tr("check_usb"))
         self.usb_check.setFont(QFont("Microsoft YaHei", 12))
         self.usb_check.setChecked(True)
         grid2.addWidget(self.usb_check, row, 0, 1, 2)
-        
+
         layout.addWidget(sound_group)
-        
-        # 共享文件夹
+
         share_group = QGroupBox("📁 " + tr("check_share"))
         share_group.setFont(QFont("Microsoft YaHei", 12))
         share_layout = QGridLayout(share_group)
         share_layout.setVerticalSpacing(8)
         share_layout.setHorizontalSpacing(12)
-        
+
         row = 0
         self.share_enable_check = QCheckBox(tr("check_share"))
         self.share_enable_check.setFont(QFont("Microsoft YaHei", 12))
         self.share_enable_check.toggled.connect(self.on_share_toggle)
         share_layout.addWidget(self.share_enable_check, row, 0, 1, 2)
-        
+
         row += 1
         share_layout.addWidget(QLabel(tr("label_share_dir")), row, 0)
         self.share_dir_label = QLabel("未选择")
@@ -3676,20 +4425,19 @@ class CreateVMDialog(QDialog):
         self.share_dir_btn.setMinimumHeight(32)
         self.share_dir_btn.clicked.connect(self.browse_share_dir)
         share_layout.addWidget(self.share_dir_btn, row, 2)
-        
+
         info_label = QLabel("💡 虚拟机内访问: \\\\10.0.2.4\\qemu")
         info_label.setStyleSheet("color: #888; font-size: 10px;")
         share_layout.addWidget(info_label, row+1, 0, 1, 3)
-        
+
         layout.addWidget(share_group)
-        
-        # ISO
+
         iso_group = QGroupBox("💿 " + tr("tab_basic"))
         iso_group.setFont(QFont("Microsoft YaHei", 12))
         iso_layout = QGridLayout(iso_group)
         iso_layout.setVerticalSpacing(8)
         iso_layout.setHorizontalSpacing(12)
-        
+
         row = 0
         iso_layout.addWidget(QLabel(tr("label_boot_iso")), row, 0)
         self.boot_iso_label = QLabel("未选择")
@@ -3703,7 +4451,7 @@ class CreateVMDialog(QDialog):
         self.boot_clear_btn.setMinimumHeight(32)
         self.boot_clear_btn.clicked.connect(lambda: self.clear_iso("boot"))
         iso_layout.addWidget(self.boot_clear_btn, row, 3)
-        
+
         row += 1
         iso_layout.addWidget(QLabel(tr("label_driver_iso")), row, 0)
         self.driver_iso_label = QLabel("未选择")
@@ -3717,7 +4465,7 @@ class CreateVMDialog(QDialog):
         self.driver_clear_btn.setMinimumHeight(32)
         self.driver_clear_btn.clicked.connect(lambda: self.clear_iso("driver"))
         iso_layout.addWidget(self.driver_clear_btn, row, 3)
-        
+
         row += 1
         iso_layout.addWidget(QLabel(tr("label_extra_args")), row, 0)
         self.extra_edit = QLineEdit()
@@ -3725,13 +4473,272 @@ class CreateVMDialog(QDialog):
         self.extra_edit.setFont(QFont("Microsoft YaHei", 12))
         self.extra_edit.setPlaceholderText("额外的 QEMU 参数")
         iso_layout.addWidget(self.extra_edit, row, 1, 1, 3)
-        
+
         layout.addWidget(iso_group)
         layout.addStretch()
         return widget
-    
+
+    def create_network_tab(self):
+        """🌐 网络模式配置 Tab"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 12, 12, 12)
+
+        # ---- 网络模式选择 ----
+        mode_group = QGroupBox("🌐 " + tr("label_network_mode"))
+        mode_group.setFont(QFont("Microsoft YaHei", 12))
+        mode_layout = QGridLayout(mode_group)
+        mode_layout.setVerticalSpacing(8)
+        mode_layout.setHorizontalSpacing(12)
+
+        row = 0
+        mode_layout.addWidget(QLabel(tr("label_network_mode")), row, 0)
+        self.network_mode_combo = QComboBox()
+        self.network_mode_combo.setMinimumHeight(32)
+        self.network_mode_combo.setFont(QFont("Microsoft YaHei", 12))
+        for mode_key in ["user", "bridge", "tap", "socket", "vde", "none"]:
+            mode_info = NETWORK_MODES.get(mode_key, {})
+            label = mode_info.get("label", mode_key)
+            self.network_mode_combo.addItem(label, mode_key)
+        self.network_mode_combo.currentIndexChanged.connect(self.on_network_mode_changed)
+        mode_layout.addWidget(self.network_mode_combo, row, 1, 1, 2)
+
+        row += 1
+        self.network_mode_desc = QLabel("")
+        self.network_mode_desc.setStyleSheet("color: #888; font-size: 11px; padding: 4px 8px; background: #1a1a1a; border-radius: 6px;")
+        self.network_mode_desc.setWordWrap(True)
+        mode_layout.addWidget(self.network_mode_desc, row, 0, 1, 3)
+
+        row += 1
+        self.network_mode_warning = QLabel("")
+        self.network_mode_warning.setStyleSheet("color: #FF8A9C; font-size: 11px; padding: 4px 8px; background: #2a1a1a; border-radius: 6px;")
+        self.network_mode_warning.setWordWrap(True)
+        self.network_mode_warning.setVisible(False)
+        mode_layout.addWidget(self.network_mode_warning, row, 0, 1, 3)
+
+        layout.addWidget(mode_group)
+
+        # ---- 网络参数 ----
+        param_group = QGroupBox("⚙️ 网络参数")
+        param_group.setFont(QFont("Microsoft YaHei", 12))
+        param_layout = QGridLayout(param_group)
+        param_layout.setVerticalSpacing(8)
+        param_layout.setHorizontalSpacing(12)
+
+        row = 0
+
+        # 网卡型号
+        param_layout.addWidget(QLabel(tr("label_nic_model")), row, 0)
+        self.net_nic_combo = QComboBox()
+        self.net_nic_combo.setMinimumHeight(32)
+        self.net_nic_combo.setFont(QFont("Microsoft YaHei", 12))
+        self.net_nic_combo.addItems(["virtio", "e1000", "rtl8139", "pcnet", "e1000e", "vmxnet3", "usb-net", "ne2k_pci"])
+        self.net_nic_combo.setEditable(True)
+        param_layout.addWidget(self.net_nic_combo, row, 1, 1, 3)
+
+        row += 1
+        param_layout.addWidget(QLabel(tr("label_nic_mac")), row, 0)
+        self.net_mac_edit = QLineEdit()
+        self.net_mac_edit.setMinimumHeight(32)
+        self.net_mac_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.net_mac_edit.setPlaceholderText("自动生成，或输入 52:54:00:xx:xx:xx")
+        param_layout.addWidget(self.net_mac_edit, row, 1, 1, 3)
+
+        row += 1
+        # 端口转发 (user模式专用)
+        self.hostfwd_label = QLabel(tr("label_hostfwd"))
+        param_layout.addWidget(self.hostfwd_label, row, 0)
+        self.net_hostfwd_edit = QLineEdit()
+        self.net_hostfwd_edit.setMinimumHeight(32)
+        self.net_hostfwd_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.net_hostfwd_edit.setPlaceholderText("tcp::2222-:22, tcp::3389-:3389")
+        param_layout.addWidget(self.net_hostfwd_edit, row, 1, 1, 3)
+
+        row += 1
+        # 桥接接口 (bridge模式专用)
+        self.bridge_label = QLabel(tr("label_bridge_interface"))
+        self.bridge_label.setVisible(False)
+        param_layout.addWidget(self.bridge_label, row, 0)
+        self.bridge_edit = QLineEdit()
+        self.bridge_edit.setMinimumHeight(32)
+        self.bridge_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.bridge_edit.setPlaceholderText("br0 (Linux) 或 以太网适配器名 (Windows)")
+        self.bridge_edit.setVisible(False)
+        param_layout.addWidget(self.bridge_edit, row, 1, 1, 3)
+
+        row += 1
+        # TAP 接口 (bridge/tap模式)
+        self.tap_label = QLabel(tr("label_tap"))
+        self.tap_label.setVisible(False)
+        param_layout.addWidget(self.tap_label, row, 0)
+        self.tap_edit = QLineEdit()
+        self.tap_edit.setMinimumHeight(32)
+        self.tap_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.tap_edit.setPlaceholderText("tap0 (Linux) 或 网卡名 (Windows)")
+        self.tap_edit.setVisible(False)
+        param_layout.addWidget(self.tap_edit, row, 1, 1, 3)
+
+        row += 1
+        # Socket 路径 (socket模式)
+        self.socket_label = QLabel(tr("label_socket_path"))
+        self.socket_label.setVisible(False)
+        param_layout.addWidget(self.socket_label, row, 0)
+        self.socket_edit = QLineEdit()
+        self.socket_edit.setMinimumHeight(32)
+        self.socket_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.socket_edit.setPlaceholderText("/tmp/qemu-socket")
+        self.socket_edit.setVisible(False)
+        param_layout.addWidget(self.socket_edit, row, 1, 1, 3)
+
+        row += 1
+        # VDE Socket (vde模式)
+        self.vde_label = QLabel(tr("label_vde_socket"))
+        self.vde_label.setVisible(False)
+        param_layout.addWidget(self.vde_label, row, 0)
+        self.vde_edit = QLineEdit()
+        self.vde_edit.setMinimumHeight(32)
+        self.vde_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.vde_edit.setPlaceholderText("/tmp/vde.ctl")
+        self.vde_edit.setVisible(False)
+        param_layout.addWidget(self.vde_edit, row, 1, 1, 3)
+
+        row += 1
+        # 网络脚本 (bridge/tap模式)
+        self.script_label = QLabel(tr("label_network_script"))
+        self.script_label.setVisible(False)
+        param_layout.addWidget(self.script_label, row, 0)
+        script_row = QHBoxLayout()
+        self.net_script_edit = QLineEdit()
+        self.net_script_edit.setMinimumHeight(32)
+        self.net_script_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.net_script_edit.setPlaceholderText("qemu-ifup (启动脚本)")
+        self.net_script_edit.setVisible(False)
+        script_row.addWidget(self.net_script_edit)
+        self.net_script_browse = QPushButton(tr("btn_browse"))
+        self.net_script_browse.setMinimumHeight(32)
+        self.net_script_browse.clicked.connect(self.browse_network_script)
+        self.net_script_browse.setVisible(False)
+        script_row.addWidget(self.net_script_browse)
+        param_layout.addLayout(script_row, row, 1, 1, 3)
+
+        row += 1
+        self.down_script_label = QLabel(tr("label_network_down_script"))
+        self.down_script_label.setVisible(False)
+        param_layout.addWidget(self.down_script_label, row, 0)
+        down_script_row = QHBoxLayout()
+        self.net_down_script_edit = QLineEdit()
+        self.net_down_script_edit.setMinimumHeight(32)
+        self.net_down_script_edit.setFont(QFont("Microsoft YaHei", 12))
+        self.net_down_script_edit.setPlaceholderText("qemu-ifdown (关闭脚本)")
+        self.net_down_script_edit.setVisible(False)
+        down_script_row.addWidget(self.net_down_script_edit)
+        self.net_down_script_browse = QPushButton(tr("btn_browse"))
+        self.net_down_script_browse.setMinimumHeight(32)
+        self.net_down_script_browse.clicked.connect(self.browse_network_down_script)
+        self.net_down_script_browse.setVisible(False)
+        down_script_row.addWidget(self.net_down_script_browse)
+        param_layout.addLayout(down_script_row, row, 1, 1, 3)
+
+        param_layout.setRowStretch(row + 1, 1)
+        layout.addWidget(param_group)
+
+        # ---- 子网/限制 ----
+        extra_group = QGroupBox("🔒 额外网络选项")
+        extra_group.setFont(QFont("Microsoft YaHei", 12))
+        extra_layout = QGridLayout(extra_group)
+        extra_layout.setVerticalSpacing(8)
+        extra_layout.setHorizontalSpacing(12)
+
+        row = 0
+        extra_layout.addWidget(QLabel(tr("label_subnet")), row, 0)
+        self.net_subnet_edit = QLineEdit()
+        self.net_subnet_edit.setMinimumHeight(32)
+        self.net_subnet_edit.setPlaceholderText("192.168.1.0/24")
+        extra_layout.addWidget(self.net_subnet_edit, row, 1, 1, 2)
+
+        row += 1
+        extra_layout.addWidget(QLabel(tr("label_dns")), row, 0)
+        self.net_dns_edit = QLineEdit()
+        self.net_dns_edit.setMinimumHeight(32)
+        self.net_dns_edit.setPlaceholderText("8.8.8.8")
+        extra_layout.addWidget(self.net_dns_edit, row, 1, 1, 2)
+
+        row += 1
+        self.net_restrict_check = QCheckBox(tr("check_net_restrict"))
+        self.net_restrict_check.setFont(QFont("Microsoft YaHei", 12))
+        extra_layout.addWidget(self.net_restrict_check, row, 0, 1, 3)
+
+        layout.addWidget(extra_group)
+        layout.addStretch()
+
+        return widget
+
+    def on_network_mode_changed(self, index):
+        """网络模式切换时的UI变化"""
+        mode_key = self.network_mode_combo.currentData()
+        mode_info = NETWORK_MODES.get(mode_key, {})
+
+        self.network_mode_desc.setText(mode_info.get("description", ""))
+
+        warnings = []
+        if mode_info.get("needs_admin", False):
+            warnings.append("⚠️ 此模式需要管理员/root权限")
+        if mode_info.get("needs_tap", False):
+            warnings.append("⚠️ 此模式需要创建 TAP 设备")
+        if warnings:
+            self.network_mode_warning.setText("\n".join(warnings))
+            self.network_mode_warning.setVisible(True)
+        else:
+            self.network_mode_warning.setVisible(False)
+
+        is_bridge = mode_key == "bridge"
+        is_tap = mode_key == "tap"
+        is_socket = mode_key == "socket"
+        is_vde = mode_key == "vde"
+        is_user = mode_key == "user"
+
+        self.hostfwd_label.setVisible(is_user)
+        self.net_hostfwd_edit.setVisible(is_user)
+
+        self.bridge_label.setVisible(is_bridge)
+        self.bridge_edit.setVisible(is_bridge)
+
+        show_tap = is_bridge or is_tap
+        self.tap_label.setVisible(show_tap)
+        self.tap_edit.setVisible(show_tap)
+
+        self.socket_label.setVisible(is_socket)
+        self.socket_edit.setVisible(is_socket)
+
+        self.vde_label.setVisible(is_vde)
+        self.vde_edit.setVisible(is_vde)
+
+        show_script = is_bridge or is_tap
+        self.script_label.setVisible(show_script)
+        self.net_script_edit.setVisible(show_script)
+        self.net_script_browse.setVisible(show_script)
+        self.down_script_label.setVisible(show_script)
+        self.net_down_script_edit.setVisible(show_script)
+        self.net_down_script_browse.setVisible(show_script)
+
+    def browse_network_script(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("label_network_script"), str(BASE_DIR),
+            "脚本文件 (*.sh *.bat *.py);;所有文件 (*)"
+        )
+        if path:
+            self.net_script_edit.setText(path)
+
+    def browse_network_down_script(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("label_network_down_script"), str(BASE_DIR),
+            "脚本文件 (*.sh *.bat *.py);;所有文件 (*)"
+        )
+        if path:
+            self.net_down_script_edit.setText(path)
+
     def on_qemu_version_changed(self):
-        """QEMU版本切换时更新硬件信息"""
         qemu_ver = self.qemu_version_combo.currentText()
         if qemu_ver and qemu_ver in self.hardware_detector.qemu_versions:
             info = self.hardware_detector.qemu_versions[qemu_ver]["info"]
@@ -3743,79 +4750,102 @@ class CreateVMDialog(QDialog):
             self.hw_info_label.setText(hw_text)
             self.hw_info_label.setStyleSheet("color: #6a9a6a; font-size: 11px; padding: 4px;")
             self.update_hardware_lists(info)
-    
+
     def update_hardware_lists(self, info: dict):
-        """更新硬件下拉列表（动态从QEMU检测结果填充）"""
-        # CPU型号
+        """更新硬件下拉列表 - 只追加不覆盖"""
+        # CPU 型号 - 只追加 QEMU 检测到的，不覆盖已有的 FORCE_CPU_MODELS
         if info.get('cpu_models'):
             current = self.cpu_model_combo.currentText()
-            self.cpu_model_combo.clear()
-            self.cpu_model_combo.addItems(info['cpu_models'])
-            if current in info['cpu_models']:
+            for model in info['cpu_models']:
+                if self.cpu_model_combo.findText(model) == -1:
+                    self.cpu_model_combo.addItem(model)
+            if current and self.cpu_model_combo.findText(current) != -1:
                 self.cpu_model_combo.setCurrentText(current)
-            else:
-                self.cpu_model_combo.setCurrentIndex(0)
         
         # 显卡
         if info.get('vga_types'):
             current = self.vga_combo.currentText()
-            self.vga_combo.clear()
-            self.vga_combo.addItems(info['vga_types'])
-            if current in info['vga_types']:
+            for item in info['vga_types']:
+                if self.vga_combo.findText(item) == -1:
+                    self.vga_combo.addItem(item)
+            if current and self.vga_combo.findText(current) != -1:
                 self.vga_combo.setCurrentText(current)
         
         # 显示后端
         if info.get('display_types'):
             current = self.display_combo.currentText()
-            self.display_combo.clear()
-            self.display_combo.addItems(info['display_types'])
-            if current in info['display_types']:
+            for item in info['display_types']:
+                if self.display_combo.findText(item) == -1:
+                    self.display_combo.addItem(item)
+            if current and self.display_combo.findText(current) != -1:
                 self.display_combo.setCurrentText(current)
         
         # 机器类型
         if info.get('machine_types'):
             current = self.machine_combo.currentText()
-            self.machine_combo.clear()
-            self.machine_combo.addItems(info['machine_types'])
-            if current in info['machine_types']:
+            for item in info['machine_types']:
+                if self.machine_combo.findText(item) == -1:
+                    self.machine_combo.addItem(item)
+            if current and self.machine_combo.findText(current) != -1:
                 self.machine_combo.setCurrentText(current)
         
         # 加速器
         if info.get('accel_types'):
             current = self.accel_combo.currentText()
-            self.accel_combo.clear()
-            self.accel_combo.addItems(info['accel_types'])
-            if hasattr(self.parent, 'hardware_detector'):
-                default = self.parent.hardware_detector.default_accel
-                if default in info['accel_types']:
-                    self.accel_combo.setCurrentText(default)
-                    self.accel_status_label.setText(f"✅ 系统支持: {default}")
-                    self.accel_status_label.setStyleSheet("color: #6a9a6a; font-size: 11px;")
-                else:
-                    self.accel_status_label.setText("⚠️ 当前加速器可能不受系统支持")
-                    self.accel_status_label.setStyleSheet("color: #FF8A9C; font-size: 11px;")
+            for item in info['accel_types']:
+                if self.accel_combo.findText(item) == -1:
+                    self.accel_combo.addItem(item)
+            if current and self.accel_combo.findText(current) != -1:
+                self.accel_combo.setCurrentText(current)
+            else:
+                if hasattr(self.parent, 'hardware_detector'):
+                    default = self.parent.hardware_detector.default_accel
+                    if default and self.accel_combo.findText(default) != -1:
+                        self.accel_combo.setCurrentText(default)
+                        self.accel_status_label.setText(f"✅ 系统支持: {default}")
+                        self.accel_status_label.setStyleSheet("color: #6a9a6a; font-size: 11px;")
+                    else:
+                        self.accel_status_label.setText("⚠️ 当前加速器可能不受系统支持")
+                        self.accel_status_label.setStyleSheet("color: #FF8A9C; font-size: 11px;")
         
-        # 网络设备
+        # 网卡
         if info.get('netdev_types'):
             current = self.nic_combo.currentText()
-            self.nic_combo.clear()
-            self.nic_combo.addItems(info['netdev_types'])
-            if current in info['netdev_types']:
+            for item in info['netdev_types']:
+                if self.nic_combo.findText(item) == -1:
+                    self.nic_combo.addItem(item)
+            if current and self.nic_combo.findText(current) != -1:
                 self.nic_combo.setCurrentText(current)
         
-        # 音频设备
+        # 声卡
         if info.get('audio_devices'):
             current = self.sound_combo.currentText()
-            self.sound_combo.clear()
-            self.sound_combo.addItems(info['audio_devices'])
-            if current in info['audio_devices']:
+            for item in info['audio_devices']:
+                if self.sound_combo.findText(item) == -1:
+                    self.sound_combo.addItem(item)
+            if current and self.sound_combo.findText(current) != -1:
                 self.sound_combo.setCurrentText(current)
-    
+
+    def load_hardware_profiles(self):
+        manager = HardwareProfileManager()
+        self.cpu_profile_combo.clear()
+        for name in manager.get_all_names():
+            self.cpu_profile_combo.addItem(name)
+        if hasattr(self.vm, 'cpu_profile') and self.vm.cpu_profile:
+            idx = self.cpu_profile_combo.findText(self.vm.cpu_profile)
+            if idx >= 0:
+                self.cpu_profile_combo.setCurrentIndex(idx)
+
+    def open_hardware_profile_manager(self):
+        dialog = HardwareProfileManagerDialog(self)
+        dialog.exec()
+        self.load_hardware_profiles()
+
     def on_preset_changed(self, preset_name: str):
+        """预设模板切换 - 填充配置"""
         preset = SYSTEM_PRESETS.get(preset_name)
         if not preset:
             return
-        
         if not self.existing_vm:
             self.name_edit.setText("")
         self.os_combo.setCurrentText(preset["os_type"])
@@ -3841,29 +4871,27 @@ class CreateVMDialog(QDialog):
         self.smp_threads_spin.setValue(1)
         self.smp_sockets_spin.setValue(1)
         self.vnc_edit.setText("")
-        
         qemu_ver = preset.get("qemu_version", "")
         if qemu_ver:
             idx = self.qemu_version_combo.findText(qemu_ver)
             if idx >= 0:
                 self.qemu_version_combo.setCurrentIndex(idx)
-        
-        self.preset_desc.setText(tr("label_preset_desc", preset.get('description', '')))
-    
+        self.preset_desc.setText(f"💡 {preset.get('description', '')}")
+
     def on_share_toggle(self, checked):
         self.share_dir_label.setEnabled(checked)
         self.share_dir_btn.setEnabled(checked)
-    
+
     def browse_share_dir_click(self, event):
         if self.share_enable_check.isChecked():
             self.browse_share_dir()
-    
+
     def browse_share_dir(self):
         folder = QFileDialog.getExistingDirectory(self, tr("label_share_dir"), str(BASE_DIR))
         if folder:
             self.share_dir_label.setText(folder)
             self._temp_share_dir = folder
-    
+
     def browse_iso(self, iso_type: str):
         file_path, _ = QFileDialog.getOpenFileName(
             self, f"选择{iso_type}镜像", str(ISO_DIR),
@@ -3878,7 +4906,7 @@ class CreateVMDialog(QDialog):
                 self.driver_iso_label.setText(Path(file_path).name)
                 self.driver_iso_label.setStyleSheet("border: 2px solid #4CAF50; padding: 4px; border-radius: 6px; background: #e8f5e9;")
                 self._temp_driver_path = file_path
-    
+
     def clear_iso(self, iso_type: str):
         if iso_type == "boot":
             self.boot_iso_label.setText("未选择")
@@ -3888,7 +4916,7 @@ class CreateVMDialog(QDialog):
             self.driver_iso_label.setText("未选择")
             self.driver_iso_label.setStyleSheet("border: 2px solid #555; padding: 4px; border-radius: 6px; color: #aaa;")
             self._temp_driver_path = ""
-    
+
     def show_preset_help(self):
         QMessageBox.information(self, tr("info"),
             "📋 系统预设 = 一键配置最佳参数\n\n"
@@ -3900,67 +4928,56 @@ class CreateVMDialog(QDialog):
             "• Android → QEMU 2019 + IDE + 关闭声卡\n\n"
             "选好预设后可以手动微调每个参数！"
         )
-    
+
     def show_history(self):
         name = self.name_edit.text().strip()
         if not name:
             QMessageBox.warning(self, tr("warning"), tr("msg_name_empty"))
             return
-        
         history = self.history.get_history(name)
         if not history:
             QMessageBox.information(self, tr("info"), tr("msg_history_no_entries", name))
             return
-        
         dialog = QDialog(self)
         dialog.setWindowTitle(tr("history_title", name))
         dialog.setMinimumSize(600, 400)
-        
         layout = QVBoxLayout(dialog)
-        
         list_widget = QListWidget()
         for i, entry in enumerate(history):
             timestamp = entry.get("timestamp", "未知时间")
             list_widget.addItem(tr("history_entry", i+1, timestamp))
         layout.addWidget(list_widget)
-        
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        
         restore_btn = QPushButton(tr("history_restore_btn"))
         restore_btn.clicked.connect(lambda: self.restore_history(dialog, list_widget.currentRow(), name))
         btn_layout.addWidget(restore_btn)
-        
         close_btn = QPushButton(tr("btn_close"))
         close_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(close_btn)
-        
         layout.addLayout(btn_layout)
         dialog.exec()
-    
+
     def restore_history(self, dialog, index, name):
         if index < 0:
             QMessageBox.warning(dialog, tr("warning"), tr("msg_history_select"))
             return
-        
         config = self.history.restore_entry(name, index)
         if not config:
             QMessageBox.warning(dialog, tr("error"), tr("msg_history_restore_failed"))
             return
-        
-        reply = QMessageBox.question(dialog, tr("confirm"), 
+        reply = QMessageBox.question(dialog, tr("confirm"),
             tr("msg_history_restore", name),
             QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        
         vm = VMConfig.from_dict(config)
         self.vm = vm
         self.advanced_widget.set_vm_ref(vm)
         self.load_vm_data(vm)
         dialog.accept()
         QMessageBox.information(self, tr("success"), tr("msg_history_restored"))
-    
+
     def load_vm_data(self, vm: VMConfig):
         self.name_edit.setText(vm.name)
         self.os_combo.setCurrentText(vm.os_type)
@@ -4004,6 +5021,27 @@ class CreateVMDialog(QDialog):
             self.driver_iso_label.setStyleSheet("border: 2px solid #4CAF50; padding: 4px; border-radius: 6px; background: #e8f5e9;")
             self._temp_driver_path = vm.driver_iso
         self.extra_edit.setText(vm.extra_args)
+
+        # 加载网络模式
+        idx = self.network_mode_combo.findData(vm.network_mode)
+        if idx >= 0:
+            self.network_mode_combo.setCurrentIndex(idx)
+        self.bridge_edit.setText(vm.bridge_interface)
+        self.tap_edit.setText(vm.tap_interface)
+        self.socket_edit.setText(vm.socket_path)
+        self.vde_edit.setText(vm.vde_socket)
+        self.net_script_edit.setText(vm.network_script)
+        self.net_down_script_edit.setText(vm.network_down_script)
+        self.net_nic_combo.setCurrentText(vm.nic_model)
+        self.net_mac_edit.setText(vm.mac_address)
+        self.net_hostfwd_edit.setText(vm.hostfwd)
+        self.net_subnet_edit.setText(vm.net_subnet)
+        self.net_dns_edit.setText(vm.net_dns)
+        self.net_restrict_check.setChecked(vm.net_restrict)
+
+        # 触发网络模式切换
+        self.on_network_mode_changed(self.network_mode_combo.currentIndex())
+
         self.advanced_widget.set_config({
             "cache": vm.cache,
             "aio": vm.aio,
@@ -4044,17 +5082,21 @@ class CreateVMDialog(QDialog):
             "boot_once": vm.boot_once,
             "extra_advanced_args": vm.extra_advanced_args,
         })
-    
+        self.load_hardware_profiles()
+        if vm.cpu_profile:
+            idx = self.cpu_profile_combo.findText(vm.cpu_profile)
+            if idx >= 0:
+                self.cpu_profile_combo.setCurrentIndex(idx)
+
     def save(self):
         name = self.name_edit.text().strip()
         if not name:
             QMessageBox.warning(self, tr("warning"), tr("msg_name_empty"))
             return
-        
         if not self.existing_vm and (VMS_DIR / name).exists():
             QMessageBox.warning(self, tr("warning"), tr("msg_vm_exists", name))
             return
-        
+
         vm = self.vm if self.existing_vm else VMConfig()
         vm.name = name
         vm.os_type = self.os_combo.currentText()
@@ -4068,6 +5110,7 @@ class CreateVMDialog(QDialog):
         vm.disk_format = self.disk_format_combo.currentText()
         vm.disk_interface = self.disk_interface_combo.currentText()
         vm.cpu_model = self.cpu_model_combo.currentText()
+        vm.cpu_profile = self.cpu_profile_combo.currentText()
         vm.accel = self.accel_combo.currentText()
         vm.vga = self.vga_combo.currentText()
         vm.display = self.display_combo.currentText()
@@ -4089,19 +5132,30 @@ class CreateVMDialog(QDialog):
         vm.extra_args = self.extra_edit.text().strip()
         vm.no_hpet = False
         vm.no_kvm = False
-        
-        # 性能参数（从高级选项获取）
-        # CPU频率和时钟在性能调优选项卡中
-        
+
+        # 保存网络模式
+        vm.network_mode = self.network_mode_combo.currentData()
+        vm.bridge_interface = self.bridge_edit.text().strip()
+        vm.tap_interface = self.tap_edit.text().strip()
+        vm.socket_path = self.socket_edit.text().strip()
+        vm.vde_socket = self.vde_edit.text().strip()
+        vm.network_script = self.net_script_edit.text().strip()
+        vm.network_down_script = self.net_down_script_edit.text().strip()
+        vm.nic_model = self.net_nic_combo.currentText()
+        vm.mac_address = self.net_mac_edit.text().strip()
+        vm.hostfwd = self.net_hostfwd_edit.text().strip()
+        vm.net_subnet = self.net_subnet_edit.text().strip()
+        vm.net_dns = self.net_dns_edit.text().strip()
+        vm.net_restrict = self.net_restrict_check.isChecked()
+
         adv = self.advanced_widget.get_config()
         for key, val in adv.items():
             setattr(vm, key, val)
-        
+
         if not self.existing_vm:
             vm.created = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             vm_dir = VMS_DIR / name
             vm_dir.mkdir(parents=True, exist_ok=True)
-            
             disk_path = vm_dir / f"disk.{vm.disk_format}"
             qemu_img = find_qemu_img()
             if qemu_img:
@@ -4114,23 +5168,21 @@ class CreateVMDialog(QDialog):
                     vm.add_disk(str(disk_path), vm.disk_size, vm.disk_format, vm.disk_interface)
                 except Exception as e:
                     print(f"创建磁盘失败: {e}")
-        
+
         vm_dir = VMS_DIR / vm.name
         config_file = vm_dir / "config.json"
         config_data = vm.to_dict()
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(config_data, f, indent=2, ensure_ascii=False)
-        
+
         self.history.add_entry(vm.name, config_data)
         self.vm = vm
         self.accept()
-    
+
     def get_vm(self) -> Optional[VMConfig]:
         return self.vm
 
-# ============================================================
-# 主窗口
-# ============================================================
+# ========== 主窗口 ==========
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -4145,17 +5197,14 @@ class MainWindow(QMainWindow):
         self.refresh_vm_list()
         self.load_language_setting()
         self.status_bar.showMessage(tr("status_detecting") + " " + tr("status_ready"))
-    
+
     def init_ui(self):
-        # 大字体微软雅黑
         font = QFont("Microsoft YaHei", 11)
         self.setFont(font)
-        
         self.setWindowTitle(tr("app_title", APP_VERSION))
         self.setMinimumSize(1100, 700)
         self.resize(1200, 750)
-        
-        # 全局黑色背景 + 白色文字
+
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #000000;
@@ -4382,156 +5431,131 @@ class MainWindow(QMainWindow):
                 background: #666666;
             }
         """)
-        
-        # ===== 菜单栏 =====
+
         menubar = self.menuBar()
-        
-        # 文件菜单
+
         file_menu = menubar.addMenu("文件(&F)")
         new_action = QAction(tr("btn_new"), self)
         new_action.triggered.connect(self.create_vm)
         new_action.setShortcut("Ctrl+N")
         file_menu.addAction(new_action)
-        
         file_menu.addSeparator()
-        
         import_action = QAction(tr("btn_import"), self)
         import_action.triggered.connect(self.import_vm)
         file_menu.addAction(import_action)
-        
         export_action = QAction(tr("btn_export"), self)
         export_action.triggered.connect(self.export_vm)
         file_menu.addAction(export_action)
-        
         export_as_menu = QMenu(tr("btn_export_as"), self)
         for fmt, desc in [("mikan", "Mikan (.mikan)"), ("vmdk", "VMDK"), ("vdi", "VDI"), ("vhdx", "VHDX"), ("raw", "RAW")]:
             action = QAction(desc, self)
             action.triggered.connect(lambda checked, f=fmt: self.export_vm_as(f))
             export_as_menu.addAction(action)
         file_menu.addMenu(export_as_menu)
-        
         file_menu.addSeparator()
-        
         exit_action = QAction("退出(&X)", self)
         exit_action.triggered.connect(self.close)
         exit_action.setShortcut("Ctrl+Q")
         file_menu.addAction(exit_action)
-        
-        # 虚拟机菜单
+
         vm_menu = menubar.addMenu("虚拟机(&V)")
         settings_action = QAction(tr("btn_edit"), self)
         settings_action.triggered.connect(self.edit_vm)
         settings_action.setShortcut("Ctrl+S")
         vm_menu.addAction(settings_action)
-        
         vm_menu.addSeparator()
-        
         launch_action = QAction(tr("btn_launch"), self)
         launch_action.triggered.connect(self.launch_vm)
         launch_action.setShortcut("Ctrl+P")
         vm_menu.addAction(launch_action)
-        
         vm_menu.addSeparator()
-        
         snapshot_action = QAction(tr("btn_snapshot"), self)
         snapshot_action.triggered.connect(self.manage_snapshots)
         vm_menu.addAction(snapshot_action)
-        
         script_action = QAction(tr("btn_script"), self)
         script_action.triggered.connect(self.export_script)
         vm_menu.addAction(script_action)
-        
         disk_action = QAction(tr("btn_disk"), self)
         disk_action.triggered.connect(self.show_disk_manager)
         vm_menu.addAction(disk_action)
-        
         vm_menu.addSeparator()
-        
         delete_action = QAction(tr("btn_delete"), self)
         delete_action.triggered.connect(self.delete_vm)
         delete_action.setShortcut("Delete")
         vm_menu.addAction(delete_action)
-        
-        # 检测菜单（新增）
+
+        # ===== 硬件配置菜单 =====
+        hw_menu = menubar.addMenu("🔧 " + tr("menu_profile"))
+        new_hw_action = QAction(tr("menu_profile_new"), self)
+        new_hw_action.triggered.connect(self.open_new_hw_profile_dialog)
+        hw_menu.addAction(new_hw_action)
+        manage_hw_action = QAction(tr("menu_profile_manage"), self)
+        manage_hw_action.triggered.connect(self.open_hw_profile_manager)
+        hw_menu.addAction(manage_hw_action)
+
         detect_menu = menubar.addMenu(tr("menu_detect"))
         detect_hw_action = QAction(tr("menu_detect_hw"), self)
         detect_hw_action.triggered.connect(self.detect_system_hardware)
         detect_menu.addAction(detect_hw_action)
-        
         detect_qemu_action = QAction("🔍 检测 QEMU 硬件", self)
         detect_qemu_action.triggered.connect(self.detect_qemu_hardware)
         detect_menu.addAction(detect_qemu_action)
-        
-        # 查看菜单
+
         view_menu = menubar.addMenu("查看(&V)")
         lang_menu = view_menu.addMenu(tr("menu_language"))
         for code, name in self.translator.get_languages().items():
             action = QAction(name, self)
             action.triggered.connect(lambda checked, c=code: self.change_language(c))
             lang_menu.addAction(action)
-        
-        # 帮助菜单
+
         help_menu = menubar.addMenu(tr("menu_help"))
         about_action = QAction(tr("menu_help_about"), self)
         about_action.triggered.connect(self.show_help)
         help_menu.addAction(about_action)
-        
-        # ===== 工具栏 - 只保留核心按钮 =====
+
         toolbar = QToolBar("主工具栏")
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-        
+
         self.btn_new = QToolButton()
         self.btn_new.setText("📦 " + tr("btn_new"))
         self.btn_new.clicked.connect(self.create_vm)
         toolbar.addWidget(self.btn_new)
-        
         toolbar.addSeparator()
-        
         self.btn_edit = QToolButton()
         self.btn_edit.setText("✏️ " + tr("btn_edit"))
         self.btn_edit.clicked.connect(self.edit_vm)
         self.btn_edit.setEnabled(False)
         toolbar.addWidget(self.btn_edit)
-        
         toolbar.addSeparator()
-        
         self.btn_launch = QToolButton()
         self.btn_launch.setText("🚀 " + tr("btn_launch"))
         self.btn_launch.clicked.connect(self.launch_vm)
         self.btn_launch.setEnabled(False)
         self.btn_launch.setStyleSheet("QToolButton { color: #6a9a6a; font-weight: bold; }")
         toolbar.addWidget(self.btn_launch)
-        
         toolbar.addSeparator()
-        
         self.btn_export = QToolButton()
         self.btn_export.setText("📦 " + tr("btn_export"))
         self.btn_export.clicked.connect(self.export_vm)
         self.btn_export.setEnabled(False)
         toolbar.addWidget(self.btn_export)
-        
         self.btn_import = QToolButton()
         self.btn_import.setText("📥 " + tr("btn_import"))
         self.btn_import.clicked.connect(self.import_vm)
         toolbar.addWidget(self.btn_import)
-        
         toolbar.addSeparator()
-        
         self.btn_refresh = QToolButton()
         self.btn_refresh.setText("🔄 " + tr("btn_refresh"))
         self.btn_refresh.clicked.connect(self.refresh)
         toolbar.addWidget(self.btn_refresh)
-        
-        # ===== 主布局 =====
+
         splitter = QSplitter(Qt.Horizontal)
-        
-        # 左侧 - 虚拟机列表
+
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
-        
         title_widget = QWidget()
         title_widget.setStyleSheet("background-color: #000000; padding: 6px 12px;")
         title_layout = QHBoxLayout(title_widget)
@@ -4544,77 +5568,62 @@ class MainWindow(QMainWindow):
         self.count_label.setStyleSheet("color: #888888; font-size: 12px;")
         title_layout.addWidget(self.count_label)
         left_layout.addWidget(title_widget)
-        
+
         self.vm_list_widget = QListWidget()
         self.vm_list_widget.setFont(QFont("Microsoft YaHei", 12))
         self.vm_list_widget.itemSelectionChanged.connect(self.on_vm_selected)
         self.vm_list_widget.itemDoubleClicked.connect(self.launch_vm)
         left_layout.addWidget(self.vm_list_widget)
-        
         splitter.addWidget(left_widget)
-        
-        # 右侧 - 详细信息面板
+
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(4)
-        
-        # 顶部信息栏
         info_widget = QWidget()
         info_widget.setStyleSheet("background-color: #000000; border-radius: 4px;")
         info_layout = QHBoxLayout(info_widget)
         info_layout.setContentsMargins(12, 8, 12, 8)
-        
         self.vm_name_label = QLabel("选择虚拟机")
         self.vm_name_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #ffffff;")
         info_layout.addWidget(self.vm_name_label)
         info_layout.addStretch()
-        
         self.vm_status_label = QLabel("● 未运行")
         self.vm_status_label.setStyleSheet("color: #666666; font-size: 13px;")
         info_layout.addWidget(self.vm_status_label)
-        
         right_layout.addWidget(info_widget)
-        
-        # 选项卡
+
         self.tab_widget = QTabWidget()
         self.tab_widget.setStyleSheet("QTabWidget::pane { background-color: #000000; border: none; }")
-        
-        # 摘要
         self.summary_tab = self.create_summary_tab()
         self.tab_widget.addTab(self.summary_tab, "📋 摘要")
-        
-        # 配置
         self.config_tab = self.create_config_tab()
         self.tab_widget.addTab(self.config_tab, "⚙️ 配置")
-        
         right_layout.addWidget(self.tab_widget)
-        
+
         splitter.addWidget(right_widget)
         splitter.setSizes([280, 920])
-        
+
         central = QWidget()
         central_layout = QHBoxLayout(central)
         central_layout.setContentsMargins(0, 0, 0, 0)
         central_layout.addWidget(splitter)
         self.setCentralWidget(central)
-        
+
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage(tr("status_ready"))
-    
+
     def create_summary_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setSpacing(10)
         layout.setContentsMargins(12, 12, 12, 12)
-        
         info_group = QGroupBox("基本信息")
         info_group.setFont(QFont("Microsoft YaHei", 12))
         info_layout = QGridLayout(info_group)
         info_layout.setVerticalSpacing(8)
         info_layout.setHorizontalSpacing(16)
-        
         self.summary_labels = {}
         fields = [
             ("系统类型:", "os_type"),
@@ -4626,15 +5635,12 @@ class MainWindow(QMainWindow):
             ("QEMU版本:", "qemu_version"),
             ("创建时间:", "created"),
         ]
-        
         for row, (label, key) in enumerate(fields):
             info_layout.addWidget(QLabel(label), row, 0)
             self.summary_labels[key] = QLabel("-")
             self.summary_labels[key].setStyleSheet("color: #ffffff; font-weight: bold;")
             info_layout.addWidget(self.summary_labels[key], row, 1)
-        
         layout.addWidget(info_group)
-        
         status_group = QGroupBox("运行状态")
         status_group.setFont(QFont("Microsoft YaHei", 12))
         status_layout = QVBoxLayout(status_group)
@@ -4642,25 +5648,21 @@ class MainWindow(QMainWindow):
         self.summary_status_label.setStyleSheet("color: #666666; font-size: 16px; padding: 6px;")
         status_layout.addWidget(self.summary_status_label)
         layout.addWidget(status_group)
-        
         layout.addStretch()
         return widget
-    
+
     def create_config_tab(self):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(12, 12, 12, 12)
-        
         self.config_info_label = QLabel("请选择一个虚拟机来查看配置")
         self.config_info_label.setStyleSheet("color: #888888; font-size: 14px; padding: 20px;")
         self.config_info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.config_info_label)
-        
         layout.addStretch()
         return widget
-    
+
     def refresh_ui_texts(self):
-        """刷新UI文字（语言切换时调用）"""
         self.setWindowTitle(tr("app_title", APP_VERSION))
         self.btn_new.setText("📦 " + tr("btn_new"))
         self.btn_edit.setText("✏️ " + tr("btn_edit"))
@@ -4669,12 +5671,11 @@ class MainWindow(QMainWindow):
         self.btn_import.setText("📥 " + tr("btn_import"))
         self.btn_refresh.setText("🔄 " + tr("btn_refresh"))
         self.status_bar.showMessage(tr("status_refreshed"))
-    
+
     def load_vms(self):
         self.vm_list = []
         if not VMS_DIR.exists():
             return
-        
         for vm_dir in VMS_DIR.iterdir():
             if not vm_dir.is_dir():
                 continue
@@ -4687,7 +5688,7 @@ class MainWindow(QMainWindow):
                         self.vm_list.append(vm)
                 except Exception as e:
                     print(f"加载失败 {vm_dir.name}: {e}")
-    
+
     def refresh_vm_list(self):
         self.vm_list_widget.clear()
         icons = {"Windows": "🪟", "Linux": "🐧", "Android": "📱", "macOS": "🍎"}
@@ -4697,7 +5698,7 @@ class MainWindow(QMainWindow):
             item.setData(Qt.UserRole, vm)
             self.vm_list_widget.addItem(item)
         self.count_label.setText(str(len(self.vm_list)))
-    
+
     def on_vm_selected(self):
         items = self.vm_list_widget.selectedItems()
         if not items:
@@ -4707,17 +5708,15 @@ class MainWindow(QMainWindow):
             self.btn_export.setEnabled(False)
             self.vm_name_label.setText("选择虚拟机")
             return
-        
         vm = items[0].data(Qt.UserRole)
         self.current_vm = vm
         self.btn_edit.setEnabled(True)
         self.btn_launch.setEnabled(True)
         self.btn_export.setEnabled(True)
-        
         self.vm_name_label.setText(vm.name)
         self.update_summary(vm)
         self.update_config_tab(vm)
-    
+
     def update_summary(self, vm: VMConfig):
         self.summary_labels["os_type"].setText(vm.os_type)
         self.summary_labels["os_version"].setText(vm.os_version)
@@ -4727,16 +5726,13 @@ class MainWindow(QMainWindow):
         self.summary_labels["disk_size"].setText(f"{vm.disk_size} GB")
         self.summary_labels["qemu_version"].setText(vm.qemu_version)
         self.summary_labels["created"].setText(vm.created or "-")
-    
+
     def update_config_tab(self, vm: VMConfig):
-        # 清除旧的配置显示
         for child in self.tab_widget.widget(1).findChildren(QWidget):
             if child != self.tab_widget.widget(1):
                 child.deleteLater()
-        
         layout = QVBoxLayout(self.tab_widget.widget(1))
         layout.setContentsMargins(12, 12, 12, 12)
-        
         text = f"""
         <b>名称:</b> {vm.name}<br>
         <b>系统:</b> {vm.os_type} {vm.os_version}<br>
@@ -4746,11 +5742,13 @@ class MainWindow(QMainWindow):
         <b>磁盘:</b> {vm.disk_size} GB ({vm.disk_format})<br>
         <b>接口:</b> {vm.disk_interface}<br>
         <b>CPU模型:</b> {vm.cpu_model}<br>
+        <b>硬件配置:</b> {vm.cpu_profile or "默认"}<br>
         <b>加速:</b> {vm.accel}<br>
         <b>显卡:</b> {vm.vga}<br>
         <b>机器:</b> {vm.machine_type}<br>
         <b>声卡:</b> {vm.sound}<br>
         <b>网卡:</b> {vm.nic_model}<br>
+        <b>网络模式:</b> {vm.network_mode}<br>
         <b>QEMU:</b> {vm.qemu_version}<br>
         """
         if vm.boot_iso:
@@ -4759,23 +5757,30 @@ class MainWindow(QMainWindow):
             text += f"<b>共享目录:</b> {vm.share_dir}<br>"
         if vm.hostfwd:
             text += f"<b>端口转发:</b> {vm.hostfwd}<br>"
-        if vm.cpu_freq > 0:
-            text += f"<b>CPU频率:</b> {vm.cpu_freq} MHz<br>"
-        if vm.cpu_clock > 0:
-            text += f"<b>CPU时钟:</b> {vm.cpu_clock} MHz<br>"
-        
+        if vm.bridge_interface:
+            text += f"<b>桥接接口:</b> {vm.bridge_interface}<br>"
+        if vm.tap_interface:
+            text += f"<b>TAP设备:</b> {vm.tap_interface}<br>"
         label = QLabel(text)
         label.setStyleSheet("color: #d0d0d0; font-size: 13px; padding: 8px;")
         label.setWordWrap(True)
         layout.addWidget(label)
-        
         edit_btn = QPushButton("✏️ " + tr("btn_edit"))
         edit_btn.setMinimumHeight(36)
         edit_btn.clicked.connect(self.edit_vm)
         layout.addWidget(edit_btn)
-        
         layout.addStretch()
-    
+
+    # ===== 硬件配置菜单方法 =====
+    def open_new_hw_profile_dialog(self):
+        dialog = HardwareProfileEditDialog(self, None, HardwareProfileManager())
+        if dialog.exec() == QDialog.Accepted:
+            QMessageBox.information(self, "成功", "✅ 硬件配置已保存，可在虚拟机编辑界面中选择使用")
+
+    def open_hw_profile_manager(self):
+        dialog = HardwareProfileManagerDialog(self)
+        dialog.exec()
+
     def create_vm(self):
         dialog = CreateVMDialog(self)
         if dialog.exec() == QDialog.Accepted:
@@ -4784,12 +5789,11 @@ class MainWindow(QMainWindow):
                 self.vm_list.append(vm)
                 self.refresh_vm_list()
                 self.status_bar.showMessage(tr("status_created", vm.name))
-    
+
     def edit_vm(self):
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
         dialog = CreateVMDialog(self, self.current_vm)
         if dialog.exec() == QDialog.Accepted:
             vm = dialog.get_vm()
@@ -4797,17 +5801,15 @@ class MainWindow(QMainWindow):
                 self.load_vms()
                 self.refresh_vm_list()
                 self.status_bar.showMessage(tr("status_updated", vm.name))
-    
+
     def launch_vm(self):
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
         launcher = BASE_DIR / "launcher.py"
         if not launcher.exists():
             QMessageBox.warning(self, tr("error"), tr("msg_launcher_missing", launcher))
             return
-        
         try:
             subprocess.Popen(
                 ["python", str(launcher), self.current_vm.name],
@@ -4816,11 +5818,10 @@ class MainWindow(QMainWindow):
             self.status_bar.showMessage(tr("status_launched", self.current_vm.name))
         except Exception as e:
             QMessageBox.warning(self, tr("error"), tr("msg_launch_failed", e))
-    
+
     def delete_vm(self):
         if not self.current_vm:
             return
-        
         reply = QMessageBox.question(
             self, tr("confirm"),
             f"确定要删除虚拟机 '{self.current_vm.name}' 吗？\n\n⚠️ 此操作不可恢复！",
@@ -4828,26 +5829,22 @@ class MainWindow(QMainWindow):
         )
         if reply != QMessageBox.Yes:
             return
-        
         vm_dir = VMS_DIR / self.current_vm.name
         if vm_dir.exists():
             shutil.rmtree(vm_dir)
-        
         snap_dir = SNAPSHOTS_DIR / self.current_vm.name
         if snap_dir.exists():
             shutil.rmtree(snap_dir)
-        
         self.vm_list.remove(self.current_vm)
         self.current_vm = None
         self.refresh_vm_list()
         self.vm_name_label.setText("选择虚拟机")
         self.status_bar.showMessage(tr("status_deleted"))
-    
+
     def export_vm(self):
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
         default_name = f"{self.current_vm.name}.mikan"
         file_path, _ = QFileDialog.getSaveFileName(
             self, tr("btn_export"), str(EXPORT_DIR / default_name),
@@ -4855,18 +5852,14 @@ class MainWindow(QMainWindow):
         )
         if not file_path:
             return
-        
         if not file_path.endswith('.mikan'):
             file_path += '.mikan'
-        
-        reply = QMessageBox.question(self, tr("confirm"), 
+        reply = QMessageBox.question(self, tr("confirm"),
             tr("msg_export_confirm", self.current_vm.name, file_path),
             QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        
         self.status_bar.showMessage(tr("status_exporting", self.current_vm.name))
-        
         def do_export():
             try:
                 vm_dir = VMS_DIR / self.current_vm.name
@@ -4891,20 +5884,15 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.status_bar.showMessage(tr("status_export_failed"))
                 QMessageBox.warning(self, tr("error"), f"{tr('status_export_failed')}:\n{e}")
-        
         Thread(target=do_export).start()
-    
+
     def export_vm_as(self, format_type: str):
-        """导出为指定格式"""
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
         if format_type == "mikan":
             self.export_vm()
             return
-        
-        # 查找磁盘文件
         if self.current_vm.disks:
             disk_path = Path(self.current_vm.disks[0]["path"])
             disk_format = self.current_vm.disks[0]["format"]
@@ -4914,32 +5902,26 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, tr("error"), "虚拟机没有磁盘")
             return
-        
         if not disk_path.exists():
             QMessageBox.warning(self, tr("error"), "磁盘文件不存在")
             return
-        
         format_map = {"vmdk": ("vmdk", "VMDK"), "vdi": ("vdi", "VDI"), "vhdx": ("vhdx", "VHDX"), "raw": ("img", "RAW")}
         ext, desc = format_map.get(format_type, (format_type, format_type.upper()))
-        
         qemu_img = find_qemu_img()
         if not qemu_img:
             QMessageBox.warning(self, tr("error"), tr("msg_qemu_img_not_found"))
             return
-        
         zip_path, _ = QFileDialog.getSaveFileName(
             self, f"导出为 {desc}", str(EXPORT_DIR / f"{self.current_vm.name}_{format_type}.zip"),
             "ZIP 压缩包 (*.zip)"
         )
         if not zip_path:
             return
-        
         self.status_bar.showMessage(f"⏳ 正在导出 {desc}...")
-        
         def do_export():
             try:
                 temp_disk = EXPORT_DIR / f"temp_{self.current_vm.name}.{ext}"
-                subprocess.run([str(qemu_img), "convert", "-f", disk_format, "-O", format_type, 
+                subprocess.run([str(qemu_img), "convert", "-f", disk_format, "-O", format_type,
                               str(disk_path), str(temp_disk)], check=True, capture_output=True, encoding='utf-8', errors='ignore')
                 temp_dir = EXPORT_DIR / f"temp_export_{int(time.time())}"
                 temp_dir.mkdir(parents=True, exist_ok=True)
@@ -4962,9 +5944,8 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.status_bar.showMessage(tr("status_export_failed"))
                 QMessageBox.warning(self, tr("error"), f"{tr('status_export_failed')}:\n{e}")
-        
         Thread(target=do_export).start()
-    
+
     def import_vm(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, tr("btn_import"), str(EXPORT_DIR),
@@ -4972,19 +5953,15 @@ class MainWindow(QMainWindow):
         )
         if not file_path:
             return
-        
         if not file_path.endswith('.mikan'):
             QMessageBox.warning(self, tr("error"), tr("msg_mikan_format"))
             return
-        
-        reply = QMessageBox.question(self, tr("confirm"), 
+        reply = QMessageBox.question(self, tr("confirm"),
             tr("msg_import_confirm", Path(file_path).name),
             QMessageBox.Yes | QMessageBox.No)
         if reply != QMessageBox.Yes:
             return
-        
         self.status_bar.showMessage(tr("status_importing"))
-        
         def do_import():
             try:
                 temp_dir = Path(tempfile.mkdtemp())
@@ -5007,7 +5984,7 @@ class MainWindow(QMainWindow):
                         raise Exception("找不到虚拟机文件")
                 target_dir = VMS_DIR / vm_name
                 if target_dir.exists():
-                    reply = QMessageBox.question(self, tr("confirm"), 
+                    reply = QMessageBox.question(self, tr("confirm"),
                         tr("msg_overwrite_confirm", vm_name),
                         QMessageBox.Yes | QMessageBox.No)
                     if reply != QMessageBox.Yes:
@@ -5029,14 +6006,12 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.status_bar.showMessage(tr("status_import_failed"))
                 QMessageBox.warning(self, tr("error"), f"{tr('status_import_failed')}:\n{e}")
-        
         Thread(target=do_import).start()
-    
+
     def manage_snapshots(self):
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
         QMessageBox.information(self, "📸 快照管理",
             "快照功能已在启动器中完整实现\n\n"
             "三种快照方案:\n"
@@ -5044,18 +6019,16 @@ class MainWindow(QMainWindow):
             "🔥 内部快照 - 运行时 savevm (需要QMP)\n"
             "🔥 外部快照 - 运行时 blockdev-snapshot-sync\n\n"
             "请通过启动器窗口操作快照")
-    
+
     def export_script(self):
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
-        reply = QMessageBox.question(self, tr("confirm"), 
+        reply = QMessageBox.question(self, tr("confirm"),
             tr("msg_export_format_choose"),
             QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel)
         if reply == QMessageBox.Cancel:
             return
-        
         is_windows = (reply == QMessageBox.Yes)
         ext = ".bat" if is_windows else ".sh"
         file_path, _ = QFileDialog.getSaveFileName(
@@ -5064,7 +6037,6 @@ class MainWindow(QMainWindow):
         )
         if not file_path:
             return
-        
         try:
             from launcher import build_command
             cmd, error = build_command(self.current_vm.to_dict())
@@ -5085,27 +6057,26 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr("error"), "找不到 launcher.py")
         except Exception as e:
             QMessageBox.warning(self, tr("error"), f"导出失败:\n{e}")
-    
+
     def show_disk_manager(self):
         if not self.current_vm:
             QMessageBox.warning(self, tr("warning"), tr("msg_select_vm"))
             return
-        
-        QMessageBox.information(self, tr("btn_disk"), 
+        QMessageBox.information(self, tr("btn_disk"),
             "💾 磁盘管理功能已在虚拟机配置中集成\n\n"
             "请在「编辑」→ 硬件配置中调整磁盘设置\n"
             "包括: 磁盘大小、格式、接口等")
-    
+
     def refresh(self):
         self.load_vms()
         self.refresh_vm_list()
         self.status_bar.showMessage(tr("status_refreshed"))
-    
+
     def change_language(self, lang_code: str):
         self.translator.set_language(lang_code)
         self.refresh_ui_texts()
         self.status_bar.showMessage(f"🌐 语言已切换")
-    
+
     def load_language_setting(self):
         lang_file = CONFIG_DIR / "lang.json"
         if lang_file.exists():
@@ -5116,7 +6087,7 @@ class MainWindow(QMainWindow):
                     self.translator.set_language(lang)
             except:
                 pass
-    
+
     def show_help(self):
         QMessageBox.information(self, tr("menu_help_about"),
             f"📖 Mikan QEMU Manager v{APP_VERSION}\n\n"
@@ -5132,28 +6103,22 @@ class MainWindow(QMainWindow):
             "🔍 自动检测当前目录下所有QEMU版本\n"
             "⚡ 自动检测系统支持的硬件加速\n"
             "💻 根据选择的QEMU版本动态更新硬件列表\n"
-            "🌐 支持多语言: 简体中文 / English"
+            "🧠 内置2011-2026年硬件配置，支持用户自定义\n"
+            "📂 自定义硬件配置保存在 hardware_profiles/custom/*.json\n"
+            "🌐 支持多语言: 简体中文 / English\n"
+            "🌐 支持网络模式: user/bridge/tap/socket/vde/none"
         )
-    
+
     def detect_system_hardware(self):
-        """检测系统硬件信息 - 使用紧凑对话框"""
         self.status_bar.showMessage("🔍 正在检测系统硬件...")
-        
         def worker():
             try:
                 info = SystemDetector.get_system_info()
-                
-                # 构建文本
-                text = "🖥️ 系统信息\n"
-                text += "=" * 40 + "\n"
+                text = "🖥️ 系统信息\n" + "=" * 40 + "\n"
                 for key, value in info.items():
                     text += f"{key}: {value}\n"
-                
-                # QEMU 硬件信息
-                text += "\n\n🔍 QEMU 支持硬件\n"
-                text += "=" * 40 + "\n"
+                text += "\n\n🔍 QEMU 支持硬件\n" + "=" * 40 + "\n"
                 qemu_info = SystemDetector.get_qemu_supported_hardware()
-                
                 for category, items in qemu_info.items():
                     if items:
                         text += f"\n📌 {category}:\n"
@@ -5162,32 +6127,23 @@ class MainWindow(QMainWindow):
                                 text += f"  • {item.get('版本', '')} - {item.get('信息', '')}\n"
                             else:
                                 text += f"  • {item}\n"
-                
-                # 通过信号回到主线程显示
-                QMetaObject.invokeMethod(self, "show_detection_result", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "show_detection_result", Qt.QueuedConnection,
                                          Q_ARG(str, "🔍 系统检测结果"), Q_ARG(str, text))
-                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection,
                                          Q_ARG(str, "✅ 系统检测完成"))
             except Exception as e:
-                QMetaObject.invokeMethod(self, "show_error", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "show_error", Qt.QueuedConnection,
                                          Q_ARG(str, f"检测失败:\n{e}"))
-                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection,
                                          Q_ARG(str, f"❌ 检测失败: {e}"))
-        
         Thread(target=worker).start()
-    
+
     def detect_qemu_hardware(self):
-        """检测 QEMU 硬件支持 - 使用紧凑对话框"""
         self.status_bar.showMessage("🔍 正在检测 QEMU 硬件支持...")
-        
         def worker():
             try:
                 qemu_info = SystemDetector.get_qemu_supported_hardware()
-                
-                text = "🔍 QEMU 硬件支持详情\n"
-                text += "=" * 40 + "\n"
-                
-                # 检测到多少个 QEMU 版本
+                text = "🔍 QEMU 硬件支持详情\n" + "=" * 40 + "\n"
                 qemu_versions = qemu_info.get("QEMU版本", [])
                 if qemu_versions:
                     text += f"\n📦 检测到 {len(qemu_versions)} 个 QEMU 版本:\n"
@@ -5195,15 +6151,11 @@ class MainWindow(QMainWindow):
                         text += f"  • {ver.get('版本', '')} ({ver.get('信息', '')})\n"
                 else:
                     text += "\n⚠️ 未检测到 QEMU 版本\n"
-                
-                # 支持的加速器
                 accels = qemu_info.get("可用加速器", [])
                 if accels:
                     text += f"\n⚡ 支持的加速器:\n"
                     for accel in accels:
                         text += f"  • {accel}\n"
-                
-                # CPU型号（只显示前15个）
                 cpus = qemu_info.get("支持CPU型号", [])
                 if cpus:
                     text += f"\n💻 支持的 CPU 型号 ({len(cpus)}种):\n"
@@ -5211,8 +6163,6 @@ class MainWindow(QMainWindow):
                         text += f"  • {cpu}\n"
                     if len(cpus) > 15:
                         text += f"  ... 还有 {len(cpus)-15} 种\n"
-                
-                # 显卡（只显示前10个）
                 vgas = qemu_info.get("支持显卡", [])
                 if vgas:
                     text += f"\n🖥️ 支持的显卡 ({len(vgas)}种):\n"
@@ -5220,8 +6170,6 @@ class MainWindow(QMainWindow):
                         text += f"  • {vga}\n"
                     if len(vgas) > 10:
                         text += f"  ... 还有 {len(vgas)-10} 种\n"
-                
-                # 机器类型（只显示前10个）
                 machines = qemu_info.get("支持机器类型", [])
                 if machines:
                     text += f"\n🏷️ 支持的机器类型 ({len(machines)}种):\n"
@@ -5229,8 +6177,6 @@ class MainWindow(QMainWindow):
                         text += f"  • {machine}\n"
                     if len(machines) > 10:
                         text += f"  ... 还有 {len(machines)-10} 种\n"
-                
-                # 网络设备（只显示前10个）
                 nets = qemu_info.get("支持网络设备", [])
                 if nets:
                     text += f"\n🌐 支持的网络设备 ({len(nets)}种):\n"
@@ -5238,8 +6184,6 @@ class MainWindow(QMainWindow):
                         text += f"  • {net}\n"
                     if len(nets) > 10:
                         text += f"  ... 还有 {len(nets)-10} 种\n"
-                
-                # 音频设备（只显示前10个）
                 audios = qemu_info.get("支持音频设备", [])
                 if audios:
                     text += f"\n🔊 支持的音频设备 ({len(audios)}种):\n"
@@ -5247,8 +6191,6 @@ class MainWindow(QMainWindow):
                         text += f"  • {audio}\n"
                     if len(audios) > 10:
                         text += f"  ... 还有 {len(audios)-10} 种\n"
-                
-                # USB设备（只显示前10个）
                 usbs = qemu_info.get("支持USB设备", [])
                 if usbs:
                     text += f"\n🔌 支持的 USB 设备 ({len(usbs)}种):\n"
@@ -5256,122 +6198,74 @@ class MainWindow(QMainWindow):
                         text += f"  • {usb}\n"
                     if len(usbs) > 10:
                         text += f"  ... 还有 {len(usbs)-10} 种\n"
-                
-                # 通过信号回到主线程显示
-                QMetaObject.invokeMethod(self, "show_detection_result", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "show_detection_result", Qt.QueuedConnection,
                                          Q_ARG(str, "🔍 QEMU 硬件支持"), Q_ARG(str, text))
-                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection,
                                          Q_ARG(str, "✅ QEMU 硬件检测完成"))
             except Exception as e:
-                QMetaObject.invokeMethod(self, "show_error", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "show_error", Qt.QueuedConnection,
                                          Q_ARG(str, f"检测失败:\n{e}"))
-                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection, 
+                QMetaObject.invokeMethod(self, "update_status", Qt.QueuedConnection,
                                          Q_ARG(str, f"❌ 检测失败: {e}"))
-        
         Thread(target=worker).start()
-    
+
     @Slot(str, str)
     def show_detection_result(self, title: str, text: str):
-        """显示检测结果 - 使用紧凑的自定义对话框（深色主题 + 滚动条）"""
         dialog = QDialog(self)
         dialog.setWindowTitle(title)
-        dialog.setFixedSize(520, 400)  # 固定大小，紧凑
-        
-        # 深色主题
+        dialog.setFixedSize(520, 400)
         dialog.setStyleSheet("""
-            QDialog {
-                background-color: #000000;
-                color: #ffffff;
-            }
-            QLabel {
-                color: #ffffff;
-                font-size: 12px;
-                font-family: "Microsoft YaHei";
-            }
-            QScrollArea {
-                background-color: #000000;
-                border: 1px solid #333333;
-                border-radius: 4px;
-            }
-            QScrollBar:vertical {
-                background-color: #000000;
-                width: 14px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #333333;
-                border-radius: 6px;
-                min-height: 20px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #444444;
-            }
-            QPushButton {
-                background-color: #333333;
-                color: #ffffff;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 20px;
-                font-weight: bold;
-                font-size: 13px;
-                font-family: "Microsoft YaHei";
-            }
-            QPushButton:hover {
-                background-color: #444444;
-            }
+            QDialog { background-color: #000000; color: #ffffff; }
+            QLabel { color: #ffffff; font-size: 12px; font-family: "Microsoft YaHei"; }
+            QScrollArea { background-color: #000000; border: 1px solid #333333; border-radius: 4px; }
+            QScrollBar:vertical { background-color: #000000; width: 14px; border-radius: 6px; }
+            QScrollBar::handle:vertical { background-color: #333333; border-radius: 6px; min-height: 20px; }
+            QScrollBar::handle:vertical:hover { background-color: #444444; }
+            QPushButton { background-color: #333333; color: #ffffff; border: none; border-radius: 4px; padding: 8px 20px; font-weight: bold; font-size: 13px; font-family: "Microsoft YaHei"; }
+            QPushButton:hover { background-color: #444444; }
         """)
-        
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
-        
-        # 内容滚动区域
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
         content_layout.setContentsMargins(8, 8, 8, 8)
-        
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setTextInteractionFlags(Qt.TextSelectableByMouse)  # 允许复制
+        label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         content_layout.addWidget(label)
         content_layout.addStretch()
-        
         scroll.setWidget(content_widget)
         layout.addWidget(scroll, 1)
-        
-        # 关闭按钮
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
         close_btn = QPushButton(tr("btn_close"))
         close_btn.clicked.connect(dialog.accept)
         btn_layout.addWidget(close_btn)
         layout.addLayout(btn_layout)
-        
         dialog.exec()
-    
+
     @Slot(str)
     def update_status(self, message: str):
-        """更新状态栏"""
         self.status_bar.showMessage(message)
-    
+
     @Slot(str)
     def show_error(self, message: str):
-        """显示错误"""
         QMessageBox.warning(self, tr("error"), message)
 
 
+# ============================================================
+# main()
+# ============================================================
 def main():
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     app.setApplicationName("Mikan QEMU Manager")
     app.setApplicationVersion(APP_VERSION)
-    
-    # 设置默认字体
     font = QFont("Microsoft YaHei", 11)
     app.setFont(font)
-    
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
