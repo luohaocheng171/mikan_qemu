@@ -1,426 +1,315 @@
-[README (2).md](https://github.com/user-attachments/files/31589334/README.2.md)
-# Mikan QEMU Manager & Launcher
+# Mikan QEMU 工具箱
 
-> **AI 辅助生成项目** — 核心脚本由 **DeepSeek（深度求索）AI** 辅助生成，经人工审核与调整。
-> **开源协议** — 本项目严格遵循 **GNU General Public License v3.0 (GPL-3.0)**。
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/GUI-PySide6-green.svg)](https://www.qt.io/qt-for-python)
 
----
+> QEMU 虚拟机全功能管理套件 — 图形化硬件配置管理 + 智能窗口追踪启动器
 
-## 目录
+本仓库包含两个紧密协作的 QEMU 管理工具：
 
-1. [项目简介](#-项目简介)
-2. [核心特性](#-核心特性)
-3. [组件说明](#-组件说明)
-4. [支持的 CPU 架构](#-支持的-cpu-架构)
-5. [CPU 指令集管理](#-cpu-指令集管理)
-6. [环境要求](#-环境要求)
-7. [快速开始](#-快速开始)
-8. [目录结构](#-目录结构)
-9. [配置说明](#-配置说明)
-10. [开发指南](#-开发指南)
-11. [常见问题 (FAQ)](#-常见问题-faq)
-12. [贡献代码](#-贡献代码)
-13. [许可证](#-许可证)
-14. [免责声明](#-免责声明)
+| 工具 | 版本 | 说明 |
+|------|------|------|
+| Mikan QEMU Manager | v5.5 | VMware 风格 UI 的完整 QEMU 虚拟机管理器，支持硬件配置预设、多文件夹管理、自定义路径、内存磁盘调优、硬件直通等 |
+| Mikan QEMU Launcher | v14.2 | 侧边栏跟随 QEMU 窗口的智能启动器，支持多文件夹绑定、自定义 QEMU 路径、非阻塞功能检测、全异步命令构建 |
 
 ---
 
-## 项目简介
+## 项目介绍
 
-本项目是一套基于 **QEMU** 的虚拟机管理工具集，提供 VMware 风格的图形化界面，支持 **27 种 CPU 架构** 的虚拟机创建、启动、快照管理、U 盘挂载、鼠标切换和性能监控等功能。
+### Mikan QEMU Manager v5.5
 
-项目由两个核心脚本组成：
+Mikan QEMU Manager 是一款基于 Python 和 PySide6 开发的 QEMU 虚拟机管理器桌面应用程序，采用 VMware 风格图形界面。提供完整的硬件配置预设系统（内置 2011-2024 年各时代硬件配置 + 自定义配置），支持 CPU 型号/指令集、显卡/显示后端、声卡/网卡、磁盘接口、机器类型、加速模式、USB 控制器等全维度硬件参数调优。内置多文件夹管理（config/folders.json），可切换不同 QEMU 安装目录和虚拟机工作区，支持自定义 QEMU 路径、内存盘回退、硬件直通等高级功能。
 
-- **launcher.py**（v9.0）— QEMU 虚拟机启动器，负责虚拟机的完整生命周期管理，包括配置解析、QEMU 参数构建、进程控制、快照操作、QMP 监控等。
-- **mikan_qemu.py**（v5.1）— 虚拟机管理器，提供完整的 VMware 风格 UI，内置 **CPU 指令集管理菜单**（覆盖 2011-2026 年共 16 个年份的 x86/x86_64 指令集配置文件），支持自定义指令集的创建、编辑和删除。
+### Mikan QEMU Launcher v14.2
 
-适用于：
-
-- 🖥️ **多架构虚拟化**：在 x86_64 主机上运行 ARM、RISC-V、MIPS、PPC、SPARC 等异构架构的虚拟机。
-- 🧪 **操作系统开发**：快速启动不同架构和指令集版本的测试环境。
-- 🔄 **兼容性测试**：通过切换 CPU 指令集模拟不同年代硬件。
-- 📦 **嵌入式开发**：支持 LoongArch、RISC-V、MIPS 等嵌入式架构的交叉编译与调试。
+Mikan QEMU Launcher 是一款智能 QEMU 启动器，核心能力是自动追踪 QEMU 窗口（GTK/SDL）并实现侧边栏跟随。支持多文件夹绑定（从 config/folders.json 读取）、自定义 QEMU 路径、build_command 覆盖主编辑器 v5.5 所有字段。v14.2 版本引入非阻塞 QEMU features 检测 + 文件缓存 + build_command 全异步（UI 不卡），支持多架构（x86_64/x86/ARM64/ARM/RISC-V）自动识别与可执行文件查找。
 
 ---
 
-## 核心特性
+## 功能特性
 
-### 通用特性
+### Mikan QEMU Manager v5.5
 
-- **VMware 风格 UI** — 基于 PySide6 (Qt6) 构建的现代化图形界面，操作直观。
-- **多架构支持** — 内置 27 种 CPU 架构的默认配置（机器类型、CPU 模型、VGA、显示后端）。
-- **QEMU 版本自动检测** — 自动扫描项目目录下的 QEMU 可执行文件，根据架构匹配正确的二进制。
-- **QEMU 功能自动探测** — 启动时自动检测 QEMU 支持的显示后端特性（grab-on-click、gl、window-size、audiodev、sandbox、qmp 等）。
-- **自动路径修复** — 智能修复虚拟机配置中的路径问题（如用户名变更、路径迁移）。
-- **快照管理** — 创建、列出、恢复、删除虚拟机快照。
-- **U 盘挂载** — 支持可移动存储设备的挂载与弹射。
-- **鼠标切换** — 支持鼠标捕获/释放切换，兼容多种输入模式。
-- **性能监控** — 实时监控虚拟机的 CPU、内存、磁盘 I/O 和网络 I/O。
-- **QMP 监控** — 通过 QEMU Monitor Protocol 进行高级管理和调试。
+#### 硬件配置管理
 
-### mikan_qemu.py 特有功能
+- **内置硬件预设**：10 套内置配置覆盖 2011-2024 年各时代硬件（retro_2011、retro_2013、transition_2016、modern_2019、latest_2024、epyc_2023、minimal、macos、android、linux_server）
+- **自定义配置**：创建/编辑/删除自定义硬件配置文件（JSON 持久化）
+- **CPU 配置**：支持 40+ CPU 型号（host、qemu64、Opteron系列、EPYC系列、Skylake系列、SandyBridge系列、Haswell系列、Broadwell系列等），自定义指令集标志
+- **显卡配置**：virtio/std/cirrus/vmvga/qxl/bochs/ramfb/sga/none，显示后端 gtk/sdl/none/curses/spice/egl-headless
+- **声卡配置**：hda/ac97/sb16/ich9-intel-hda/ich9-hda/cs4231a/gus/intel-hda/isa/pcspk/pl041/none
+- **网卡配置**：virtio/e1000/rtl8139/pcnet/e1000e/vmxnet3/usb-net/ne2k_pci
+- **磁盘接口**：ide/sata/virtio/scsi/nvme/usb/sd/floppy
+- **机器类型**：pc/q35/virt/microvm 及各版本兼容型号
+- **加速模式**：tcg/hax/whpx/kvm/hvf/qtest/none
+- **USB 控制器**：none/piix3-usb-uhci/usb-ehci/usb-ohci/usb-uhci/usb-xhci/nec-usb-xhci
 
-- **CPU 指令集管理** — 独立的指令集管理菜单，支持创建、编辑、删除自定义 CPU 配置文件。
-- **内置 16 个年份指令集** — 从 2011 年 Nehalem 到 2026 年最新指令集，覆盖 Intel/AMD 主要微架构。
-- **自动依赖安装** — 启动时自动检测并安装缺失的 Python 依赖包（PySide6、psutil）。
-- **配置文件管理** — 每个虚拟机拥有独立的 config.json 配置文件，支持磁盘、ISO、BIOS 等完整配置。
+#### 多文件夹管理
 
----
+- 支持多个工作文件夹绑定（config/folders.json）
+- 每个文件夹独立配置 QEMU 路径
+- 活动文件夹切换，自动重建目录结构（vms/iso/snapshots/exports/share/hardware_profiles）
+- 配置文件随文件夹切换自动加载
 
-## 组件说明
+#### 设置与配置
 
-### launcher.py — QEMU 虚拟机启动器 (v9.0)
+- JSON 持久化配置（settings.json）
+- 自定义 QEMU 可执行文件路径
+- 各虚拟机独立配置（config.json）
+- 硬件配置文件导入导出
 
-负责虚拟机的完整生命周期管理：
+#### UI 特性
 
-| 功能模块 | 说明 |
-| :--- | :--- |
-| `get_qemu_features()` | 自动探测 QEMU 二进制支持的功能特性（显示、音频、沙箱、QMP 等） |
-| `fix_vm_config_paths()` | 自动修复虚拟机配置文件中的路径问题（用户名替换、相对路径定位） |
-| `auto_fix_all_vms()` | 批量修复所有虚拟机的配置路径 |
-| `get_qemu_year()` | 从 QEMU 版本号字符串中提取年份，支持多种版本号格式 |
-| `get_qemu_exe()` | 根据架构和版本自动定位 QEMU 可执行文件 |
-| `get_arch_defaults()` | 为 27 种 CPU 架构提供默认机器类型、CPU 模型、VGA 和显示后端配置 |
+- VMware 风格扁平化 UI
+- 硬件配置管理对话框（多 Tab 页：基本信息/CPU/显卡显示/声音网络/主板存储）
+- 硬件配置列表（内置/自定义分组显示）
+- 实时详情面板展示选中配置的完整参数
 
-### mikan_qemu.py — 虚拟机管理器 (v5.1)
+#### 其他特性
 
-提供完整的图形化管理界面：
-
-| 功能模块 | 说明 |
-| :--- | :--- |
-| `check_and_install_dependencies()` | 启动时自动检查并安装 PySide6、psutil 依赖 |
-| `CPUProfileManager` | 指令集管理器，加载内置 + 自定义 CPU 配置文件 |
-| `CPUProfileEditDialog` | 创建/编辑指令集的对话框界面 |
-| `BUILTIN_CPU_PROFILES` | 内置 16 个年份的 x86/x86_64 指令集定义（2011-2026） |
+- 自动依赖检查与安装（PySide6、psutil）
+- 管理员权限检测
+- UTF-8 编码自动适配（Windows）
+- 异步 Worker 线程（不阻塞 UI）
 
 ---
 
-## 支持的 CPU 架构
+### Mikan QEMU Launcher v14.2
 
-launcher.py 内置支持以下 **27 种 CPU 架构** 的默认配置：
+#### 窗口追踪与跟随
 
-| 架构 | 机器类型 | 默认 CPU 模型 |
-| :--- | :--- | :--- |
-| x86_64 | q35 | host |
-| x86 | pc | qemu64 |
-| ARM64 | virt | cortex-a72 |
-| ARM | virt | cortex-a15 |
-| RISC-V | virt | rv64 |
-| RISC-V32 | virt | rv32 |
-| LoongArch | virt | la64 |
-| MIPS | malta | mips32r5 |
-| MIPS64 | malta | mips64r5 |
-| PPC | mac99 | G4 |
-| PPC64 | pseries | POWER9 |
-| SPARC | SS-5 | Fujitsu-MB86904 |
-| SPARC64 | sun4u | UltraSPARC-IIi |
-| Alpha | clipper | ev67 |
-| HPPA | hppa | PA-7100 |
-| S390X | s390-ccw-virtio | host |
-| SH4 | r2d | sh4 |
-| XTENSA | (自定义) | (自定义) |
-| M68K | (自定义) | (自定义) |
-| MICROBLAZE | (自定义) | (自定义) |
-| NIOS2 | (自定义) | (自定义) |
-| OR1K | (自定义) | (自定义) |
-| CRIS | (自定义) | (自定义) |
-| HEXAGON | (自定义) | (自定义) |
-| AVR | (自定义) | (自定义) |
-| RX | (自定义) | (自定义) |
-| TRICORE | (自定义) | (自定义) |
-| UNICORE32 | (自定义) | (自定义) |
+- **GTK 窗口追踪**：自动枚举 Windows 窗口，通过类名（gdkWindowToplevel/gtk/GDK）和标题关键词（QEMU/qemu）匹配，支持 psutil 进程名验证
+- **SDL 窗口追踪**：类似机制追踪 SDL 后端窗口（SDL/SDL_app/SDL_window 类名）
+- **窗口矩形获取**：获取窗口位置、大小（GetWindowRect）
+- **全屏检测**：通过窗口样式位判断是否全屏
+- **置顶控制**：SetWindowPos + SetForegroundWindow 将窗口置顶
 
----
+#### 多文件夹与路径管理
 
-## CPU 指令集管理
+- 从 config/folders.json 读取所有绑定文件夹
+- 自动扫描所有绑定文件夹的 vms 目录
+- 自定义 QEMU 路径优先级最高（config.json 的 custom_qemu_path）
+- 支持文件夹级 qemu_path 配置
 
-mikan_qemu.py 内置了从 2011 年到 2026 年的 **16 个 x86/x86_64 CPU 指令集配置文件**，覆盖 Intel 和 AMD 的主要微架构：
+#### QEMU 智能检测
 
-| 年份 | CPU 模型 | 关键指令集 |
-| :--- | :--- | :--- |
-| 2011 | Nehalem | +aes, +avx |
-| 2012 | Westmere | +aes, +avx, +rdrand |
-| 2013 | SandyBridge | +aes, +avx, +rdrand, +f16c |
-| 2014 | Haswell | +aes, +avx, +avx2, +bmi1, +bmi2, +f16c, +fma, +rdrand |
-| 2015 | Broadwell | +aes, +avx, +avx2, +bmi1, +bmi2, +f16c, +fma, +rdrand, +rdseed |
-| 2016 | Skylake-Client | +aes, +avx, +avx2, +bmi1, +bmi2, +f16c, +fma, +rdrand, +rdseed, +sha-ni, +xsave |
-| 2017 | Skylake-Client | 同 2016（Skylake 架构 2017 更新） |
-| 2018 | CascadeLake | 同 2016 + AVX-512 系列指令集 |
-| 2019 | CascadeLake | 同 2018 |
-| 2020 | Cooperlake | 同 2018（Cooper Lake 架构） |
-| 2021 | EPYC | +aes, +avx, +avx2, +bmi1, +bmi2, +f16c, +fma, +rdrand, +rdseed, +sha-ni, +xsave |
-| 2022 | EPYC | 同 2021 + AVX-512 系列指令集 |
-| 2023 | EPYC | 同 2022 |
-| 2024 | host | 同 2022（最新指令集） |
-| 2025 | host | 同 2022（最新指令集） |
-| 2026 | host | 同 2022（最新指令集） |
+- **版本识别**：从版本字符串中提取年份（2011-2026），支持日期格式（YYYYMMDD）
+- **架构适配**：x86_64/x86/ARM64/ARM/RISC-V 自动选择对应可执行文件名
+- **可执行文件查找**：多级优先级搜索（custom_qemu_path > folders.json qemu_path > 绑定文件夹扫描 > BASE_DIR > PATH）
+- **功能检测（v14.2 增强）**：
+  - 非阻塞执行（subprocess + timeout 强制 kill）
+  - 内存缓存（_qemu_features_cache）
+  - 文件缓存（qemu_features_cache.json，按 mtime 失效）
+  - 检测项目：grab_on_click、window_size、audiodev、sdl、gtk、qmp、mem_path、memory_backend_file、vfio_pci、usb_host、whpx、hax、kvm、hvf、accel_option
 
-### 自定义指令集
+#### 命令构建引擎（build_command）
 
-用户可以在 `cpu_profiles/custom/` 目录下放置 JSON 格式的自定义指令集配置文件，格式如下：
+- **内存配置**：基础内存、内存后备（memory-backend-file / mem-path）
+- **CPU/SMP 配置**：sockets/cores/threads 多维配置、maxcpus 计算、CPU 型号年份自适应、自定义指令集标志
+- **磁盘配置**：qcow2/raw/img/vmdk 格式自动检测、多种接口（virtio/sata/nvme/scsi/ide）、缓存模式、AIO 模式、discard/unmap、快照模式
+- **启动配置**：磁盘启动/网络启动/光盘启动、启动顺序、一次性启动设备
+- **显示配置**：VGA 型号年份自适应、GTK/SDL 后端自动切换、分辨率设置、grab-on-click、OpenGL 加速
+- **声卡配置**：audiodev 模式（dsound/coreaudio/pa）+ 传统 soundhw 回退
+- **USB 配置**：USB 控制器开关、USB 鼠标、USB 设备直通（vendor_id/product_id）
+- **网络配置**：user/bridge 模式、SMB 共享、端口转发、子网/DNS 限制、TAP 桥接
+- **机器类型**：年份自适应（q35/pc）、ACPI 开关、HPET 开关
+- **ISO 挂载**：启动 ISO + 驱动 ISO 双光盘支持
 
-```json
-{
-    "name": "my_custom_cpu",
-    "year": 2026,
-    "cpu_model": "host",
-    "flags": "+aes,+avx,+avx2,+avx512f",
-    "description": "My custom CPU profile"
-}
-```
+#### UI 特性
 
-自定义指令集会自动被 `CPUProfileManager` 扫描加载，与内置指令集共存（名称冲突时以内置为准）。
+- 侧边栏跟随 QEMU 窗口位置
+- 非阻塞架构（UI 不卡）
+- 异步命令构建
 
 ---
 
-## 环境要求
+## 技术栈
 
-| 依赖项 | 最低版本 | 说明 |
-| :--- | :--- | :--- |
-| **Python** | `3.9+` | 推荐使用 `3.11` 以获得最佳性能 |
-| **QEMU** | `4.0+` | 需下载对应架构的 QEMU 二进制，放入项目目录 |
-| **PySide6** | `6.0+` | Qt6 Python 绑定（mikan_qemu.py 自动安装） |
-| **psutil** | `5.0+` | 系统性能监控（mikan_qemu.py 自动安装） |
-| **OS** | Linux / macOS / Windows (WSL2) | Windows 原生支持有限，推荐 WSL2 |
+| 组件 | 技术 |
+|------|------|
+| 语言 | Python 3.8+ |
+| GUI 框架 | PySide6 (Qt for Python) |
+| 系统交互 | subprocess、ctypes（Windows API）、socket |
+| 配置存储 | JSON 文件（settings.json / folders.json / config.json） |
+| 进程管理 | QProcess（Launcher）、subprocess（Manager） |
+| 路径管理 | pathlib |
+| 并发模型 | threading.Thread + QThread |
+| 窗口追踪 | ctypes.windll.user32（EnumWindows/GetWindowText/GetWindowRect 等） |
+| 进程检测 | psutil |
+| UI 样式 | 自定义 QSS 主题 |
 
-### QEMU 二进制放置
+---
 
-将 QEMU 压缩包解压到项目根目录，按版本命名文件夹，例如：
+## 安装与运行
+
+### 环境要求
+
+- Windows 10/11（推荐）/ Linux / macOS
+- Python 3.8 或更高版本
+- QEMU 已安装（Manager 和 Launcher 均依赖外部 QEMU）
+
+### 安装依赖
 
 ```
-qemu-w64-setup-20190815/
-qemu-w64-setup-20251224/
-```
-
-脚本会自动扫描这些目录并匹配正确的 QEMU 二进制文件。
-
----
-
-## 快速开始
-
-### 1. 克隆/下载项目
-
-```bash
-git clone https://github.com/your-username/mikan-qemu.git
-cd mikan-qemu
-```
-
-### 2. 安装依赖
-
-mikan_qemu.py 会在首次启动时自动检测并安装缺失的依赖包。如需手动安装：
-
-```bash
 pip install PySide6 psutil
 ```
 
-### 3. 放置 QEMU 二进制
+### 运行程序
 
-下载 QEMU Windows 静态构建版，解压到项目根目录：
+**Mikan QEMU Manager v5.5：**
 
 ```
-mikan-qemu/
-├── launcher.py
-├── mikan_qemu.py
-├── qemu-w64-setup-20251224/
-│   ├── qemu-system-x86_64.exe
-│   ├── qemu-system-aarch64.exe
-│   └── ...
-└── vms/
-```
-
-### 4. 运行
-
-```bash
-# 启动虚拟机启动器
-python launcher.py
-
-# 启动完整管理器（含指令集管理菜单）
 python mikan_qemu.py
 ```
 
-### 5. 创建虚拟机
+首次运行自动检测并安装缺失依赖（PySide6、psutil）。
 
-1. 在 UI 中点击"新建虚拟机"
-2. 选择架构（如 x86_64、ARM64、RISC-V 等）
-3. 配置磁盘、ISO 镜像、内存、CPU 核心数
-4. 选择 CPU 指令集年份（mikan_qemu.py）
-5. 点击"启动"
+**Mikan QEMU Launcher v14.2：**
+
+```
+python launcher.py
+```
+
+Launcher 会自动读取 Manager 的 config/folders.json 配置文件，无需额外配置。
+
+### 配置文件说明
+
+| 文件 | 说明 |
+|------|------|
+| config/folders.json | 多文件夹绑定配置（两个工具共用） |
+| config/settings.json | Manager 用户设置 |
+| config/qemu_features_cache.json | Launcher QEMU 功能检测缓存（v14.2 新增） |
+| vms/<vm_name>/config.json | 各虚拟机独立配置 |
 
 ---
 
-## 目录结构
+## 项目结构
 
 ```
-mikan-qemu/
-├── launcher.py                  # QEMU 虚拟机启动器 (v9.0)
-├── mikan_qemu.py                # 虚拟机管理器 (v5.1)
-├── README.md                    # 项目说明文档
-├── LICENSE                      # GPL-3.0 许可证全文
-├── vms/                         # 虚拟机配置文件目录
-│   ├── <vm_name>/
-│   │   ├── config.json          # 虚拟机配置
-│   │   ├── disk.qcow2           # 磁盘镜像
-│   │   └── ...
-├── iso/                         # ISO 镜像存放目录
-├── snapshots/                   # 快照存储目录
-├── exports/                     # 导出目录
-├── config/                      # 全局配置目录
-├── share/                       # 共享目录
-├── cpu_profiles/                # CPU 指令集配置文件目录
-│   ├── profiles.json            # 指令集索引
-│   └── custom/                  # 自定义指令集 JSON 文件
-└── <qemu_version>/              # QEMU 二进制目录（按版本命名）
-    ├── qemu-system-x86_64.exe
-    ├── qemu-system-aarch64.exe
-    └── ...
+mikan_qemu.py              # Mikan QEMU Manager v5.5 主程序（单文件应用）
+launcher.py                # Mikan QEMU Launcher v14.2 主程序（单文件应用）
+├── config/                # 配置目录（两个工具共用）
+│   ├── folders.json       # 多文件夹绑定配置
+│   ├── settings.json      # Manager 设置
+│   └── qemu_features_cache.json  # Launcher 功能检测缓存
+├── vms/                   # 虚拟机目录（按虚拟机名称分文件夹）
+│   └── <vm_name>/
+│       ├── config.json    # 虚拟机配置
+│       ├── disk.qcow2     # 磁盘文件
+│       └── ...
+├── iso/                   # ISO 镜像目录
+├── snapshots/             # 快照目录
+├── exports/               # 导出目录
+├── share/                 # 共享目录
+└── hardware_profiles/     # 硬件配置文件目录
+    └── custom/            # 自定义硬件配置（JSON）
 ```
+
+> 注：两个项目均采用单文件架构，所有模块、类、对话框和工具函数均集成在各自的主文件中，便于分发和部署。Manager 负责图形化配置管理，Launcher 负责智能启动与窗口追踪，二者通过共用 config/folders.json 实现数据共享。
 
 ---
 
-## 配置说明
+## 模块说明
 
-### 虚拟机配置文件 (config.json)
+### Mikan QEMU Manager v5.5
 
-每个虚拟机在 `vms/<vm_name>/config.json` 中保存完整配置，主要字段包括：
+| 模块 | 说明 |
+|------|------|
+| `check_and_install_dependencies` | 自动依赖检查与安装（PySide6、psutil） |
+| `HardwareProfileManager` | 硬件配置文件管理器（加载内置/自定义配置、创建/更新/删除） |
+| `HardwareProfileEditDialog` | 硬件配置编辑对话框（多 Tab 页：基本信息/CPU/显卡显示/声音网络/主板存储） |
+| `HardwareProfileManagerDialog` | 硬件配置管理对话框（列表展示、详情面板、新建/编辑/删除/应用到当前VM） |
+| `load_folders_config` / `save_folders_config` | 多文件夹配置读写 |
+| `apply_active_folder` | 切换活动文件夹并重建目录结构 |
+| `load_settings` / `save_settings` | 用户设置 JSON 持久化 |
+| `BUILTIN_HARDWARE_PROFILES` | 内置硬件预设数据（10 套配置） |
+| `FORCE_CPU_MODELS` | 支持的 CPU 型号列表（40+ 型号） |
+| `is_admin` | Windows 管理员权限检测 |
 
-| 字段 | 类型 | 说明 |
-| :--- | :--- | :--- |
-| `name` | string | 虚拟机名称 |
-| `arch` | string | CPU 架构（如 x86_64、ARM64） |
-| `disk_path` | string | 主磁盘镜像路径 |
-| `disks` | array | 多磁盘配置列表 |
-| `boot_iso` | string | 启动 ISO 镜像路径 |
-| `kernel_iso` | string | 内核 ISO 路径 |
-| `driver_iso` | string | 驱动 ISO 路径 |
-| `backing_file` | string | 磁盘后备文件（增量快照） |
-| `bios_file` | string | BIOS 文件路径 |
-| `share_dir` | string | 共享目录路径 |
-| `log_file` | string | 日志文件路径 |
-| `memory` | int | 内存大小（MB） |
-| `cpus` | int | CPU 核心数 |
-| `cpu_model` | string | CPU 模型 |
-| `cpu_flags` | string | CPU 指令集标志 |
-| `display` | string | 显示后端 |
-| `vga` | string | VGA 类型 |
+### Mikan QEMU Launcher v14.2
 
-### 自动路径修复
+| 模块 | 说明 |
+|------|------|
+| `find_gtk_window` | GTK 窗口查找（枚举窗口 + 类名/标题匹配 + psutil 验证） |
+| `find_sdl_window` | SDL 窗口查找（类似机制） |
+| `get_window_rect` | 获取窗口位置/大小 |
+| `is_window_fullscreen` | 全屏检测 |
+| `bring_window_to_top` | 窗口置顶 |
+| `load_folders_config` | 读取多文件夹配置 |
+| `get_all_vms_dirs` | 获取所有绑定文件夹的 VMS 目录 |
+| `find_vm_dir` | 按名称查找虚拟机目录 |
+| `get_active_folder` | 获取活动文件夹 |
+| `get_qemu_features` | QEMU 功能检测（v14.2：非阻塞 + 内存缓存 + 文件缓存） |
+| `get_qemu_year` | 从版本字符串识别年份 |
+| `arch_to_exe_names` | 架构到可执行文件名映射 |
+| `find_qemu_exe` | QEMU 可执行文件多级查找 |
+| `get_arch_defaults` | 架构默认配置 |
+| `get_host_ip` | 主机 IP 检测 |
+| `detect_removable_drives` | 可移动磁盘检测 |
+| `build_command` | 完整 QEMU 命令构建引擎（覆盖 v5.5 所有字段） |
 
-launcher.py 内置智能路径修复机制：
+---
 
-- **用户名替换**：自动将配置中的 `Administrator` 替换为当前登录用户。
-- **相对路径定位**：当磁盘/后备文件路径不存在时，自动在虚拟机目录 `vms/<vm_name>/` 下查找同名文件。
-- **disks 列表重建**：当配置中缺少 `disks` 数组但有 `disk_path` 时，自动重建标准磁盘列表。
+## 注意事项
+
+1. **管理员权限**：部分 QEMU 功能（硬件直通、KVM 加速等）可能需要管理员权限。
+2. **杀毒软件**：程序涉及进程创建、窗口枚举和系统底层操作，可能被杀毒软件误报，请将程序加入白名单。
+3. **QEMU 安装**：本工具集不捆绑 QEMU，需用户自行安装 QEMU 并通过配置文件指定路径。
+4. **首次运行**：首次运行会自动检测并安装 Python 依赖包（PySide6、psutil），请确保网络畅通。
+5. **配置文件**：两个工具共用 config/folders.json，确保路径配置一致。
+6. **Windows 编码**：程序已内置 UTF-8 编码适配，如遇到乱码请检查系统区域设置。
+7. **性能调优**：建议在 config.json 中根据实际硬件选择合适的加速模式（KVM > HAXM > TCG）。
+8. **硬件直通**：USB 直通和 VFIO 需要系统级权限配置，请查阅 QEMU 文档。
 
 ---
 
 ## 开发指南
 
-### 项目结构说明
-
-- **launcher.py** — 启动器核心，负责 QEMU 进程管理、配置解析、快照操作。建议在此基础上扩展新的虚拟机管理功能。
-- **mikan_qemu.py** — 管理器 UI，包含完整的图形界面和指令集管理。适合需要完整管理功能的场景。
-
-### 代码规范
+### 代码风格
 
 - 遵循 PEP 8 编码规范
-- 使用类型提示（type hints）
-- 关键函数包含 docstring
-- 中文注释使用 UTF-8 编码
+- 使用类型注解（typing）
+- 异步操作通过 QThread / threading.Thread 实现
+- UI 样式统一使用 QSS 管理
 
-### 添加新架构支持
+### Manager 扩展指引
 
-在 `launcher.py` 的 `get_arch_defaults()` 函数中添加新架构的默认配置：
+1. 在 `HardwareProfileManager` 中添加新的内置硬件预设
+2. 在 `FORCE_CPU_MODELS` 中添加新的 CPU 型号
+3. 在 `HardwareProfileEditDialog.init_ui()` 中扩展新的配置 Tab 页
+4. 通过 `apply_active_folder()` 支持新的目录结构
 
-```python
-"NEW_ARCH": {"machine": "default_machine", "cpu": "default_cpu", "vga": "virtio", "display": "gtk"},
-```
+### Launcher 扩展指引
 
-同时在 `get_qemu_exe()` 的 `arch_map` 中添加对应的 QEMU 二进制文件名。
-
-### 添加新指令集
-
-在 `mikan_qemu.py` 的 `BUILTIN_CPU_PROFILES` 字典中添加新年份的指令集定义，或在 `cpu_profiles/custom/` 目录下放置 JSON 文件。
-
----
-
-## 常见问题 (FAQ)
-
-**Q: 启动虚拟机时提示 QEMU 二进制未找到？**
-
-A: 请确保已将 QEMU 静态构建版解压到项目根目录，文件夹名包含版本号（如 `qemu-w64-setup-20251224`），脚本会自动扫描匹配。
-
-**Q: 鼠标无法捕获/释放？**
-
-A: 确保 QEMU 版本支持 `grab-on-click` 功能。可在 UI 中查看 QEMU 功能检测结果。
-
-**Q: 如何切换 CPU 指令集？**
-
-A: 在 mikan_qemu.py 的虚拟机配置界面中，选择"CPU 指令集"选项，从下拉列表中选择目标年份对应的指令集配置。
-
-**Q: 自定义指令集不生效？**
-
-A: 检查 `cpu_profiles/custom/` 目录下的 JSON 文件格式是否正确，确保包含 `name`、`year`、`cpu_model`、`flags` 字段。自定义指令集名称不能与内置指令集冲突。
-
-**Q: 可以在商业项目中使用吗？**
-
-A: **可以**，但必须遵守 **GPL-3.0** 协议。如果你的项目分发了本项目的修改版或链接了本项目的代码，你的整个项目也必须以 GPL-3.0 开源。
-
-**Q: API Key 泄露了怎么办？**
-
-A: 本项目不涉及 API Key。如有配置文件中的敏感信息，请立即从 Git 历史中清除（使用 `git filter-repo`）。
-
----
-
-## 贡献代码
-
-1. Fork 本仓库
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'feat: Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-> **注意**：所有贡献者需在 PR 描述中确认：*"我确认本次提交不包含未授权的闭源代码，且同意以 GPL-3.0 协议发布。"*
+1. 在 `arch_to_exe_names()` 中添加新的架构支持
+2. 在 `find_qemu_exe()` 中扩展可执行文件查找逻辑
+3. 在 `get_qemu_features()` 中添加新的功能检测项
+4. 在 `build_command()` 中扩展新的命令行参数
+5. 窗口追踪逻辑可根据目标窗口类名/标题关键词灵活调整
 
 ---
 
 ## 许可证
 
-本项目基于 **GNU General Public License v3.0** 开源。
+本项目采用 **GNU General Public License v3.0** 许可。你可以自由地复制、修改和再分发本软件，但必须保留版权声明和许可声明。衍生作品也必须以相同的许可证开源。
 
-```
-Copyright (C) 2024 [Your Name/Organization]
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```
-
-👉 [查看完整 LICENSE 文件](./LICENSE)
+详见 [LICENSE](LICENSE) 文件。
 
 ---
 
-## 免责声明
+## 致谢
 
-1. **AI 生成内容**：本项目脚本由 DeepSeek AI 生成，尽管经过人工审核，但**不保证 100% 无误**。
-2. **生产环境**：请在**测试环境**充分验证后再用于生产环境。作者不对因使用本脚本导致的任何数据丢失、服务中断或经济损失负责。
-3. **合规责任**：用户需自行确保 AI 生成内容符合当地法律法规及公司合规要求。
-4. **QEMU 依赖**：本项目依赖 QEMU 虚拟机模拟器，请确保从官方渠道下载 QEMU 二进制文件，并遵守 QEMU 的开源许可证。
+- [PySide6](https://www.qt.io/qt-for-python) - Qt for Python 绑定
+- [QEMU](https://www.qemu.org/) - 开源虚拟机模拟器
+- [psutil](https://github.com/giampaolo/psutil) - 跨平台进程和系统监控
+- [DeepSeek](https://www.deepseek.com/) - AI 辅助开发
 
 ---
 
-<div align="center">
+## 联系方式
 
-**Made with ❤️ & 🤖 by DeepSeek Community**
+如有问题或建议，欢迎提交 Issue 或 Pull Request。
 
-[⬆ 返回顶部](#-mikan-qemu-manager--launcher)
+---
 
-</div>
+*Made with care by Mikan Team · AI assisted by DeepSeek*
