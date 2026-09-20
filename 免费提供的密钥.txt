@@ -1,0 +1,177 @@
+===============================================================================
+   Mikan 虚拟机系统完整安装密钥全集 (Windows XP → 11 全系列)
+   版本号：v3.0 (终极整合版)
+   整理人：14岁赛博架构师
+   适用环境：MIKAN_QEMU、老电脑虚拟化测试、赛博系统博物馆
+   声明：以下密钥均为微软官方公开的通用安装密钥（GVLK/KMS）及社区流传的VL版本，仅供虚拟机安装测试绕过输入密钥环节使用，严禁用于商业盗版激活。
+===============================================================================
+
+[ 第一部分：Windows XP (全系列) ]
+-------------------------------------------------------------------------------
+# 微软已于 2014 年彻底停止支持 XP。
+# 这些密钥多为当年 MSDN / 企业批量授权流传版，适合在 QEMU 虚拟机中跑老游戏。
+
+- 版本: Windows XP Professional (专业版 / SP3)
+  密钥: MRX3F-47B9T-2487J-KWKMF-RPWBY
+
+- 版本: Windows XP Professional VL (企业批量授权版 / 最常用)
+  密钥: DG8FV-B9TKY-FRT9J-6CRCC-XPQ4G
+
+- 版本: Windows XP Professional N (欧洲无媒体播放器版)
+  密钥: J7Q8W-7J4P3-V4C9M-3B2T8-2YH6K
+
+- 版本: Windows XP Home Edition (家庭版)
+  密钥: RHKG3-8YW4W-4RHJG-GM4TY-KJ8W9
+
+- 版本: Windows XP Home Edition (家庭版 / 备选)
+  密钥: QW4HD-DQCRG-3MTCR-9RR38-MTQ6T
+
+- 版本: Windows XP Media Center Edition 2005 (媒体中心版)
+  密钥: QP7BD-JPC6T-HGR8V-3R82H-4C4T9
+
+- 版本: Windows XP Tablet PC Edition (平板电脑版)
+  密钥: XJM47-RFQD2-48HT4-C8HQH-MPKQY
+
+- 版本: Windows XP Starter Edition (入门版 / 东南亚市场)
+  密钥: F7Q4X-B3T9K-QG2P6-3M4G9-2C8V7
+
+- 版本: Windows XP Professional x64 Edition (64位专业版)
+  密钥: B66VY-4D94P-96R9Q-KVKJ8-8H8TW
+
+-------------------------------------------------------------------------------
+[ 第二部分：Windows Vista (全系列) ]
+-------------------------------------------------------------------------------
+# Vista 是微软的“赛博失败试验田”，但在老电脑模拟中极具收藏价值。
+
+- 版本: Windows Vista Ultimate (旗舰版)
+  密钥: YFKBB-PQJJV-G996G-VWGXY-2V3X8
+
+- 版本: Windows Vista Business (商业版)
+  密钥: YV7WJ-6V7JT-YD7G7-3QGRK-MG7F8
+
+- 版本: Windows Vista Enterprise (企业版)
+  密钥: XGY72-BRBBT-FF8KH-2GG28-KQYWT
+
+- 版本: Windows Vista Home Premium (家庭高级版)
+  密钥: RHPQ2-RMTYH-2G82P-T74J4-KM427
+
+- 版本: Windows Vista Home Basic (家庭基础版)
+  密钥: MBQDX-R8P22-BVXTF-GBVFC-8D4YQ
+
+- 版本: Windows Vista Starter (简易版)
+  密钥: 2JBPY-KYJ6Q-2K9V9-8QBCB-7K2JK
+
+-------------------------------------------------------------------------------
+[ 第三部分：Windows Longhorn (开发代号 / 测试版) ]
+-------------------------------------------------------------------------------
+# 警告：Longhorn 并非正式发布的系统，是基于 Windows Server 2003 的早期预览版。
+# 常见镜像版本为 4074、5048 等。无微软官方标准激活码。
+
+- 版本: Longhorn Client (客户端测试版)
+  密钥: [无官方公开标准密钥，多依赖 ISO 作者预设]
+  备用测试密钥: CKY24-QR9RH-YRVG7-9BG7H-8XW8B
+
+- 版本: Longhorn Server (服务器测试版)
+  密钥: [视特定 ISO 镜像文件而定]
+
+- 提示：安装 Longhorn 前，建议在 MIKAN_QEMU 里关闭硬件加速，设置内存 512MB~1GB。
+
+-------------------------------------------------------------------------------
+[ 第四部分：Windows 7 (全系列) ]
+-------------------------------------------------------------------------------
+# 与老游戏兼容性最好的系统，在 QEMU 中应用极广。
+
+- 版本: Windows 7 Ultimate (旗舰版)
+  密钥: D4C3G-38H3H-Q2H9X-R37KG-78F29
+
+- 版本: Windows 7 Professional (专业版)
+  密钥: YKHFT-9B8J7-G7Y7Y-PH8VG-7P8MV
+
+- 版本: Windows 7 Enterprise (企业版)
+  密钥: 33PXH-7Y6KF-2VJC9-XBBR8-HVTHH
+
+- 版本: Windows 7 Starter (简易版)
+  密钥: 7X9C2-VH7TF-TPY83-X3F83-3T8CM
+
+- 版本: Windows 7 Home Premium (家庭高级版)
+  密钥: RHPQ2-RMTYH-2G82P-T74J4-KM427
+
+-------------------------------------------------------------------------------
+[ 第五部分：Windows 8 / 8.1 (全系列) ]
+-------------------------------------------------------------------------------
+# Win8.1 是许多老电脑从 7 过渡到 10 的跳板。
+
+- 版本: Windows 8.1 Pro (专业版)
+  密钥: GCRJD-8NW9H-F2CDX-CCM8D-9D6T9
+
+- 版本: Windows 8.1 Pro N (专业版 N)
+  密钥: HMCNV-FV8GC-7W4G9-H9MDV-WVX4M
+
+- 版本: Windows 8.1 Enterprise (企业版)
+  密钥: MHF9N-XY6XB-WVXMC-BTDCT-MKKG7
+
+- 版本: Windows 8.1 Enterprise N (企业版 N)
+  密钥: 7XQ7C-PRP9C-FPWHG-FH2VY-CF68W
+
+-------------------------------------------------------------------------------
+[ 第六部分：Windows 10 (全系列) ]
+-------------------------------------------------------------------------------
+# 目前老电脑过渡虚拟机的首选主力系统。
+
+- 版本: Windows 10 Pro (专业版)
+  密钥: W269N-WFGWX-YVC9B-4J6C9-T83GX
+
+- 版本: Windows 10 Pro N (专业版 N)
+  密钥: MH37W-N47XK-V7XM9-C7227-GCQG9
+
+- 版本: Windows 10 Pro for Workstations (专业工作站版)
+  密钥: NRG8B-VKK3Q-CXVCJ-9G2XF-6Q84J
+
+- 版本: Windows 10 Enterprise (企业版)
+  密钥: NPPR9-FWDCX-D2C8J-H872K-2YT43
+
+- 版本: Windows 10 Enterprise N (企业版 N)
+  密钥: DPH2V-TTNVB-4X9Q3-TJR4H-KHJW4
+
+- 版本: Windows 10 Education (教育版)
+  密钥: NW6C2-QMPVW-D7KKK-3GKT6-VCFB2
+
+- 版本: Windows 10 Education N (教育版 N)
+  密钥: 2WH4N-8QGBV-H22JP-CT43Q-MDWWJ
+
+-------------------------------------------------------------------------------
+[ 第七部分：Windows 11 (全系列) ]
+-------------------------------------------------------------------------------
+# Win11 密钥结构与 Win10 高度重合，可通用。
+
+- 版本: Windows 11 Pro (专业版)
+  密钥: W269N-WFGWX-YVC9B-4J6C9-T83GX
+
+- 版本: Windows 11 Pro N (专业版 N)
+  密钥: MH37W-N47XK-V7XM9-C7227-GCQG9
+
+- 版本: Windows 11 Pro for Workstations (专业工作站版)
+  密钥: NRG8B-VKK3Q-CXVCJ-9G2XF-6Q84J
+
+- 版本: Windows 11 Enterprise (企业版)
+  密钥: NPPR9-FWDCX-D2C8J-H872K-2YT43
+
+- 版本: Windows 11 Enterprise N (企业版 N)
+  密钥: DPH2V-TTNVB-4X9Q3-TJR4H-KHJW4
+
+- 版本: Windows 11 Education (教育版)
+  密钥: NW6C2-QMPVW-D7KKK-3GKT6-VCFB2
+
+- 版本: Windows 11 Education N (教育版 N)
+  密钥: 2WH4N-8QGBV-H22JP-CT43Q-MDWWJ
+
+===============================================================================
+[ 最终免责声明与 MIKAN_QEMU 使用建议 ]
+===============================================================================
+1. 以上所有密钥均来源于微软官方公开文档（GVLK/KMS 客户端密钥）及开源社区存档（如 Longhorn 备用码），仅供虚拟机安装测试和学习研究使用。
+2. 这些密钥仅能帮助跳过“安装时需要输入序列号”的步骤，无法提供正版激活服务。若需长期使用，请通过合法渠道购买授权或企业 KMS 激活。
+3. 在 MIKAN_QEMU 中使用 XP 或 Vista 时，请务必在 GUI 设置中将硬盘接口改为 IDE。
+4. Win7 以上系统建议开启 VirtIO 以发挥最高虚拟硬盘性能。
+
+“我不允许有人用上垃圾。但老系统值得被尊重。”
+===============================================================================

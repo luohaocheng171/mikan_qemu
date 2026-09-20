@@ -1,0 +1,1321 @@
+QEMU 完全参数手册 - 优劣势、历史遗留与报错处理大全
+================================================================================
+目录
+================================================================================
+一、基础参数 (-m, -smp, -name, -uuid)
+二、CPU与机器参数 (-cpu, -machine)
+三、存储参数 (-drive, -blockdev, -hda, -cdrom)
+四、启动参数 (-boot)
+五、显示参数 (-vga, -display, -vnc, -spice)
+六、网络参数 (-netdev, -net, -device)
+七、音频参数 (-soundhw, -audiodev)
+八、USB参数 (-usb, -usbdevice, -device)
+九、键盘鼠标参数 (-k, -device)
+十、调试与监控参数 (-d, -D, -monitor, -qmp, -gdb)
+十一、安全与沙箱参数 (-sandbox, -snapshot, -readonly)
+十二、性能优化参数 (-mem-prealloc, -hugepages, -numa)
+十三、其他参数 (-serial, -parallel, -rtc, -seed, -kernel)
+十四、历史遗留参数详解
+十五、各版本兼容性对照表
+十六、常见报错完整解决方案
+
+================================================================================
+一、基础参数 (-m, -smp, -name, -uuid)
+================================================================================
+
+1.1 -m (内存配置)
+格式: -m [size=]megs[,slots=n,maxmem=size]
+
+★ 优点:
+
+简单直观，最常用
+
+支持内存热插拔 (v2.0+)
+
+可配置最大内存和插槽数
+
+支持单位后缀 (K/M/G)
+
+★ 缺点:
+
+内存分配是静态的(除非使用热插拔)
+
+过大内存会导致启动缓慢
+
+Windows版本内存分配可能失败
+
+部分架构强制内存粒度(如ARM需要对齐)
+
+内存热插拔需要guest OS支持
+
+★ 历史遗留:
+
+v1.0前: 只支持 -m megs (无slots/maxmem)
+
+v2.0: 增加slots和maxmem支持
+
+v2.8: 支持 -m 2G 格式 (之前只支持数字)
+
+v4.0: 增加内存气球支持
+
+★ 常见报错:
+错误: "unable to map backing store for guest RAM"
+原因: 内存不足或KSM冲突
+解决: 减少内存分配，关闭KSM
+
+错误: "Cannot allocate memory"
+原因: 系统内存不足
+解决: 增加swap空间，关闭其他程序
+
+错误: "invalid memory size"
+原因: 内存大小格式错误
+解决: 使用 -m 2048 而非 -m 2048M
+
+★ 使用建议:
+
+Windows 10/11: 4GB+
+-m 4096
+
+Windows XP/7: 2GB
+-m 2048
+
+内存热插拔
+-m 4096,slots=4,maxmem=8G
+
+轻量级Linux
+-m 512
+
+1.2 -smp (CPU配置)
+格式: -smp [cores=]n[,threads=n][,sockets=n][,maxcpus=n]
+
+★ 优点:
+
+灵活配置CPU拓扑
+
+支持CPU热插拔 (v2.8+)
+
+可优化NUMA性能
+
+支持超线程模拟
+
+★ 缺点:
+
+过多CPU导致性能下降(调度开销)
+
+某些操作系统对CPU拓扑敏感
+
+Windows版本可能限制CPU数量
+
+最大255个CPU (v3.0前最多255)
+
+CPU热插拔需要guest OS支持
+
+★ 历史遗留:
+
+v1.0: 只支持 -smp n
+
+v1.4: 增加cores/threads/sockets
+
+v2.8: 增加maxcpus
+
+v5.0: 强制使用cores=语法
+
+★ 常见报错:
+错误: "smp: invalid CPU topology"
+原因: 拓扑配置不合理 (coresthreadssockets ≠ n)
+解决: 确保乘积等于CPU总数
+
+★ 使用建议:
+
+基本用法
+-smp 4
+
+拓扑优化
+-smp cores=2,threads=2,sockets=1
+
+热插拔支持
+-smp 4,maxcpus=8
+
+1.3 -name (虚拟机名称)
+格式: -name name[,process=name][,debug-threads=on|off]
+
+★ 优点:
+
+窗口标题显示
+
+进程名可识别 (Linux)
+
+调试时可区分线程
+
+★ 缺点:
+
+Windows下进程名修改有限
+
+某些版本不支持debug-threads
+
+★ 历史遗留:
+
+v1.0: 只支持 -name name
+
+v2.4: 增加process参数
+
+v4.0: 增加debug-threads
+
+1.4 -uuid (系统UUID)
+格式: -uuid UUID
+
+★ 优点:
+
+唯一标识虚拟机
+
+支持迁移
+
+某些软件需要UUID
+
+★ 缺点:
+
+生成正确的UUID需要额外工具
+
+重复UUID会导致冲突
+
+★ 使用建议:
+-uuid $(uuidgen) # Linux
+
+================================================================================
+二、CPU与机器参数 (-cpu, -machine)
+================================================================================
+
+2.1 -cpu (CPU型号)
+格式: -cpu model[,+feature][,-feature][,prop=value]
+
+★ 优点:
+
+可选择不同CPU型号
+
+可启用/禁用特定特性
+
+host模式获得最佳性能
+
+支持CPU特性精细控制
+
+★ 缺点:
+
+错误的特性组合导致启动失败
+
+不同QEMU版本支持不同型号
+
+某些型号需要特定KVM版本
+
+特性名称因版本而异
+
+迁移时CPU必须一致
+
+★ 历史遗留:
+
+v1.0: 只支持基础型号(qemu32/qemu64)
+
+v1.5: 增加core2duo等型号
+
+v2.0: 支持+/-特性语法
+
+v2.6: 增加host模式
+
+v3.0: 增加EPYC等AMD型号
+
+v5.0: 特性语法严格化
+
+v7.0: 增加CPU拓扑控制
+
+★ 常见报错:
+错误: "CPU model 'host' not supported"
+原因: QEMU版本不支持host
+解决: 使用具体型号如core2duo
+
+错误: "Unable to find CPU definition"
+原因: CPU型号拼写错误
+解决: qemu-system-x86_64 -cpu help 查看
+
+★ 使用建议:
+
+KVM最佳性能
+-cpu host
+
+兼容模式
+-cpu qemu64
+
+启用特定特性
+-cpu host,+aes,+avx,-hypervisor
+
+Windows XP兼容
+-cpu qemu32,+ssse3
+
+2.2 -machine (机器类型)
+格式: -machine [type=]NAME[,prop=VALUE[,...]]
+
+★ 优点:
+
+灵活配置硬件平台
+
+支持多种芯片组
+
+可添加/移除特性
+
+版本化机器支持迁移
+
+★ 缺点:
+
+某些属性需要特定版本
+
+错误配置导致启动失败
+
+不同架构支持不同机器
+
+★ 历史遗留:
+
+v1.0: -M pc (旧语法)
+
+v1.5: 增加q35
+
+v2.0: 增加-M q35
+
+v2.8: 统一为-machine,增加accel属性
+
+v4.0: 增加微虚拟机(microvm)
+
+★ 机器类型详解:
+pc - i440FX芯片组 (最兼容，v1.0+)
+q35 - Q35芯片组 (PCIe支持，v1.5+)
+pc-i440fx-2.8 - 版本化i440FX (迁移兼容)
+pc-q35-2.8 - 版本化Q35
+virt - 虚拟化专用 (ARM/MIPS)
+microvm - 轻量级虚拟机 (v4.2+)
+
+★ 常用属性:
+accel=kvm|tcg|hax|whpx|hvf # 加速器选择
+kernel_irqchip=on|off # 内核中断控制器
+vmport=on|off|auto # VMware IO端口
+kvm_shadow_mem=size # KVM影子MMU大小
+dump-guest-core=on|off # core dump包含guest内存
+mem-merge=on|off # KSM内存合并
+usb=on|off # USB支持
+hmat=on|off # ACPI HMAT (v5.0+)
+
+★ 常见报错:
+错误: "unsupported machine type"
+原因: 机器类型不存在
+解决: qemu-system-x86_64 -M help 查看
+
+错误: "machine type does not support usb"
+原因: 机器类型不支持USB
+解决: 使用 -machine q35,usb=on 或其他支持USB的机器
+
+★ 使用建议:
+
+现代Windows/Linux
+-machine q35,accel=kvm,usb=on
+
+老旧系统
+-machine pc,accel=tcg
+
+迁移兼容
+-machine pc-i440fx-2.8
+
+================================================================================
+三、存储参数 (-drive, -blockdev, -hda, -cdrom)
+================================================================================
+
+3.1 -drive (磁盘驱动器)
+格式: -drive option[,...]
+
+★ 优点:
+
+最通用灵活的存储配置
+
+支持多种接口和格式
+
+可精细控制缓存和IO
+
+支持多种后端存储
+
+★ 缺点:
+
+语法复杂，参数多
+
+某些组合不兼容
+
+旧版本支持有限
+
+★ 历史遗留:
+
+v1.0: 基础支持
+
+v1.5: 增加virtio接口
+
+v2.0: 增加aio支持
+
+v2.4: 增加detect-zeroes
+
+v2.8: 增加discard支持
+
+v4.0: 增加io_uring
+
+★ 完整参数:
+file=FILE # 镜像文件路径
+format=FORMAT # qcow2|raw|vmdk|vdi|vhdx
+if=IFACE # ide|sata|virtio|scsi|nvme|usb|sd|floppy
+media=MEDIA # disk|cdrom
+index=I # 0-3 (IDE)
+unit=U # 0-3
+bus=B # 总线编号
+cache=CACHE # writeback|none|writethrough|directsync|unsafe
+aio=AIO # native|threads|io_uring (v2.4+)
+discard=DISCARD # ignore|unmap (v2.8+)
+detect-zeroes=DZ # on|off|unmap (v2.4+)
+readonly=on|off # 只读模式
+copy-on-read=on|off # 复制时读 (v1.5+)
+throttling.iops-total=N # IOPS限制 (v2.10+)
+snapshot=on|off # 快照模式
+ifname=NAME # 网络接口名
+serial=SERIAL # 序列号
+
+★ 缓存模式详解:
+writeback - 写入缓存，性能最佳 (有数据丢失风险)
+writethrough - 写入即落盘，最安全 (性能较差)
+none - 无缓存，直接IO
+directsync - 同步直接IO
+unsafe - 完全绕过缓存 (最快，最不安全)
+
+★ 接口选择建议:
+IDE - 最兼容 (Windows XP及更早)
+SATA - 通用 (Windows 7/8)
+VirtIO - 最佳性能 (需要驱动)
+NVMe - 高性能 (v4.0+)
+SCSI - 服务器场景
+USB - 移动存储
+
+★ 常见报错:
+错误: "Could not open disk image"
+原因: 文件不存在或权限不足
+解决: 检查路径和权限
+
+错误: "Unknown format"
+原因: 格式不支持或未指定
+解决: 指定format=参数
+
+错误: "Device 'virtio-blk' not found"
+原因: QEMU未编译virtio支持
+解决: 使用其他接口如sata
+
+错误: "Could not open backing file"
+原因: 后端镜像丢失
+解决: qemu-img rebase修复
+
+3.2 -blockdev (高级块设备)
+格式: -blockdev driver=DRIVER,node-name=NAME,...
+
+★ 优点:
+
+最精细的块设备控制
+
+支持复杂存储拓扑
+
+支持多种后端驱动
+
+支持块设备快照
+
+★ 缺点:
+
+语法极其复杂
+
+需要深入理解存储栈
+
+初学者容易出错
+
+某些驱动需要额外编译
+
+★ 支持驱动:
+file # 文件后端
+qcow2 # QCOW2格式
+raw # RAW格式
+rbd # Ceph RBD
+iscsi # iSCSI
+nbd # NBD
+gluster # GlusterFS
+ssh # SSH
+null # 空设备
+
+★ 使用示例:
+
+完整配置
+-blockdev driver=file,node-name=disk0,filename=disk.qcow2
+-blockdev driver=qcow2,node-name=disk0qcow2,file=disk0
+-device virtio-blk-pci,drive=disk0qcow2
+
+3.3 便捷简写
+-hda file - IDE硬盘0 (最兼容)
+-hdb file - IDE硬盘1
+-hdc file - IDE硬盘2
+-hdd file - IDE硬盘3
+-cdrom file - IDE光驱 (IDE1 master)
+-fda file - 软盘0
+-fdb file - 软盘1
+
+★ 优点: 简单直观，适合初学者
+★ 缺点: 功能有限，无法精细控制
+★ 历史: 最古老的参数，所有版本支持
+
+================================================================================
+四、启动参数 (-boot)
+================================================================================
+
+4.1 -boot (启动配置)
+格式: -boot [order=drives][,once=drives][,menu=on|off][,splash=file][,splash-time=ms][,reboot-timeout=ms][,strict=on|off]
+
+★ 优点:
+
+灵活配置启动顺序
+
+支持一次启动
+
+可显示启动菜单
+
+支持启动画面
+
+★ 缺点:
+
+某些组合不兼容
+
+启动画面需要特定格式
+
+★ 引导设备简写:
+a = 软盘
+c = 硬盘 (默认)
+d = CD-ROM
+n = 网络 (PXE)
+
+★ 历史遗留:
+
+v1.0: 只支持 -boot [a|c|d|n]
+
+v1.5: 增加menu支持
+
+v2.0: 增加once/order语法
+
+v3.0: 增加splash支持
+
+★ 使用建议:
+
+从CD-ROM启动
+-boot order=d
+
+从硬盘启动，显示菜单
+-boot order=c,menu=on
+
+仅本次从CD-ROM启动
+-boot once=d
+
+================================================================================
+五、显示参数 (-vga, -display, -vnc, -spice)
+================================================================================
+
+5.1 -vga (显卡类型)
+格式: -vga type
+
+★ 优点:
+
+简单选择显卡
+
+支持多种显卡类型
+
+兼容性好
+
+★ 缺点:
+
+功能有限
+
+某些类型需要额外驱动
+
+不支持精细配置
+
+★ 显卡类型:
+std # 标准VGA (最兼容)
+cirrus # Cirrus Logic (旧系统)
+vmware # VMware SVGA (v2.0+)
+qxl # QXL (SPICE)
+virtio # VirtIO VGA (v2.0+)
+none # 无显示
+bochs # Bochs VBE
+ramfb # RAM帧缓冲
+sga # 串行图形适配器
+
+★ 历史遗留:
+
+v1.0: std/cirrus
+
+v1.5: 增加vmware
+
+v2.0: 增加virtio/qxl
+
+v4.0: 增加ramfb
+
+★ 选择建议:
+Windows XP: cirrus
+Windows 7: std
+Windows 10+: virtio
+Linux: virtio
+SPICE: qxl
+
+5.2 -display (显示后端)
+格式: -display type[,prop=value]
+
+★ 优点:
+
+灵活选择显示后端
+
+支持多种图形界面
+
+可精细控制显示参数
+
+★ 缺点:
+
+某些后端需要额外库
+
+GTK需要编译支持
+
+不同平台支持不同
+
+★ 显示类型:
+gtk # GTK图形窗口 (推荐)
+sdl # SDL图形窗口
+none # 无图形
+curses # 终端字符显示
+spice # SPICE协议
+egl-headless # EGL无头渲染
+
+★ GTK属性:
+grab-on-click=on|off # 点击窗口捕获鼠标
+window-size=WxH # 初始窗口大小
+gl=on|off # OpenGL加速
+show-cursor=on|off # 显示光标
+quit-on-close=on|off # 关闭窗口退出
+
+★ 历史遗留:
+
+v1.0: -sdl, -nographic
+
+v2.0: 增加-vnc
+
+v2.12: 统一为-display
+
+v4.0: 增加gl支持
+
+5.3 -vnc (VNC远程)
+格式: -vnc display[,password][,to=port][,ipv4|ipv6][,reverse]
+
+★ 优点:
+
+跨平台远程访问
+
+支持密码认证
+
+支持IPv4/IPv6
+
+轻量级
+
+★ 缺点:
+
+无加密 (默认)
+
+性能不如SPICE
+
+不支持音频
+
+端口映射问题
+
+★ 使用示例:
+
+5900端口
+-vnc :0
+
+5901端口，需要密码
+-vnc :1,password
+
+监听所有IP
+-vnc 0.0.0.0:2
+
+5.4 -spice (SPICE协议)
+格式: -spice option[,...]
+
+★ 优点:
+
+支持加密
+
+支持音频
+
+支持USB重定向
+
+更好的性能
+
+支持多显示器
+
+★ 缺点:
+
+需要客户端支持
+
+配置复杂
+
+某些功能需要额外库
+
+★ 使用示例:
+-spice port=5900,addr=127.0.0.1,disable-ticketing
+-spice port=5900,password=123456
+
+================================================================================
+六、网络参数 (-netdev, -net, -device)
+================================================================================
+
+6.1 -netdev (新式网络)
+格式: -netdev type,id=ID[,props]
+
+★ 优点:
+
+灵活的网络配置
+
+支持多种后端
+
+与-device配合精细控制
+
+支持多队列
+
+★ 缺点:
+
+语法复杂
+
+某些类型需要权限
+
+旧版本不支持
+
+★ 网络类型:
+user # 用户态NAT (最常用)
+tap # TAP桥接
+bridge # 桥接 (v2.0+)
+vhost-user # vhost-user (v2.2+)
+l2tpv3 # L2TPv3 (v2.12+)
+socket # socket通信
+
+★ user网络参数:
+hostfwd=规则 # 端口转发
+smb=目录 # SMB共享
+net=网段 # 子网配置
+dns=地址 # DNS服务器
+restrict=on|off # 限制网络访问
+hostname=名称 # 主机名
+ipv4=on|off # IPv4
+ipv6=on|off # IPv6
+
+★ tap网络参数:
+ifname=NAME # 接口名
+script=SCRIPT # 配置脚本
+downscript=SCRIPT # 关闭脚本
+vnet_hdr=on|off # VNET头
+
+★ 历史遗留:
+
+v1.0: -net (旧语法)
+
+v2.0: 引入-netdev
+
+v2.2: 增加vhost-user
+
+v7.0: -net完全弃用
+
+6.2 -net (旧式网络) [已弃用]
+格式: -net nic,model=MODEL[,macaddr=MAC] -net USER|TAP
+
+★ 优点:
+
+简单直接
+
+所有版本支持
+
+★ 缺点:
+
+功能有限
+
+已被-netdev替代
+
+v7.0+会打印弃用警告
+
+不支持多队列
+
+★ 使用示例:
+-net nic,model=e1000 -net user,hostfwd=tcp::2222-:22
+
+================================================================================
+七、音频参数 (-soundhw, -audiodev)
+================================================================================
+
+7.1 -soundhw (旧式音频) [已弃用]
+格式: -soundhw card1,card2,...
+
+★ 优点:
+
+简单易用
+
+所有版本支持
+
+★ 缺点:
+
+功能有限
+
+v3.0+被标记为弃用
+
+不支持多音频设备
+
+配置选项少
+
+★ 声卡类型:
+hda # Intel HD Audio (推荐)
+ac97 # AC97
+sb16 # Sound Blaster 16
+es1370 # Ensoniq ES1370
+intel-hda # Intel HDA
+pcspk # PC喇叭
+none # 无音频
+
+★ 历史遗留:
+
+v1.0: 支持sb16/ac97
+
+v2.0: 增加hda
+
+v3.0: 标记为弃用
+
+7.2 -audiodev (新式音频)
+格式: -audiodev driver,id=ID[,props]
+
+★ 优点:
+
+灵活配置
+
+支持多种驱动
+
+可精细控制
+
+支持多音频设备
+
+可配置延迟和缓冲区
+
+★ 缺点:
+
+语法复杂
+
+需要v3.0+
+
+某些驱动需要额外库
+
+★ 音频驱动:
+alsa # ALSA (Linux)
+pulse # PulseAudio (Linux)
+oss # OSS (Linux)
+wav # WAV输出
+sdl # SDL音频
+pa # PulseAudio
+coreaudio # CoreAudio (macOS)
+dsound # DirectSound (Windows)
+none # 无音频
+
+★ 使用示例:
+
+基础配置
+-audiodev wav,id=audio0
+-device intel-hda,audiodev=audio0
+
+高级配置
+-audiodev pa,id=audio0,server=/run/user/1000/pulse,latency=50000
+
+================================================================================
+八、USB参数 (-usb, -usbdevice, -device)
+================================================================================
+
+8.1 -usb (USB支持)
+格式: -usb
+
+★ 优点: 简单启用USB
+★ 缺点: 功能有限，仅启用USB总线
+★ 历史: v1.0+支持
+
+8.2 -usbdevice [已弃用]
+格式: -usbdevice device
+
+★ 优点: 简单添加USB设备
+★ 缺点: v2.5+弃用，功能有限
+★ 历史: v1.0-v2.5
+
+8.3 -device usb-* (推荐)
+格式: -device usb-controller -device usb-device
+
+★ USB控制器:
+usb-ehci # USB 2.0 EHCI
+usb-ohci # USB 1.1 OHCI
+usb-uhci # USB 1.1 UHCI
+usb-xhci # USB 3.0 XHCI (推荐)
+nec-usb-xhci # NEC USB 3.0
+
+★ USB设备:
+usb-mouse # 鼠标
+usb-kbd # 键盘
+usb-tablet # 平板 (绝对坐标)
+usb-storage # 存储
+usb-net # 网卡
+usb-host # 直通 (需要权限)
+usb-bt # 蓝牙
+
+★ 历史遗留:
+
+v1.0: 只有-usb
+
+v1.5: 增加-usbdevice
+
+v2.0: 增加-device usb-*
+
+v2.5: -usbdevice弃用
+
+★ 常见报错:
+错误: "USB is not supported by this machine"
+原因: 机器类型不支持USB
+解决: -machine q35,usb=on
+
+错误: "Could not add USB device"
+原因: 缺少USB控制器
+解决: 先添加-usb或-device usb-xhci
+
+================================================================================
+九、键盘鼠标参数 (-k, -device)
+================================================================================
+
+9.1 -k (键盘布局)
+格式: -k language
+
+★ 优点: 简单设置键盘布局
+★ 缺点: 某些布局不支持，格式要求严格
+
+★ 常用布局:
+en-us # 美式英语 (推荐)
+fr # 法语
+de # 德语
+es # 西班牙语
+it # 意大利语
+ja # 日语
+zh # 中文
+
+★ 常见报错:
+错误: "Could not read keymap file"
+原因: 布局名称无效
+解决: 使用en-us而非en
+
+9.2 鼠标设备
+-device usb-tablet # 绝对坐标 (推荐，鼠标不飘)
+-device usb-mouse # 相对坐标
+-device ps2-mouse # PS/2鼠标
+
+★ 历史遗留:
+
+v1.0: 只有ps2-mouse
+
+v1.5: 增加usb-mouse
+
+v2.0: 增加usb-tablet
+
+================================================================================
+十、调试与监控参数 (-d, -D, -monitor, -qmp, -gdb)
+================================================================================
+
+10.1 -d (调试日志)
+格式: -d item1,item2,...
+
+★ 优点:
+
+详细的调试信息
+
+可组合多个项目
+
+帮助定位问题
+
+★ 缺点:
+
+会产生大量输出
+
+影响性能
+
+某些项目需要特定编译选项
+
+★ 调试项目:
+cpu # CPU指令日志
+exec # 指令执行
+int # 中断日志
+mmu # MMU日志
+pci # PCI日志
+qmp # QMP日志
+usb # USB日志
+all # 所有日志
+guest_errors # 客户机错误
+unimp # 未实现功能
+trace:EVENT # 特定追踪事件
+
+★ 使用建议:
+
+基础调试
+-d guest_errors
+
+完整调试
+-d cpu,exec,mmu,int
+
+10.2 -D (日志文件)
+格式: -D logfile
+★ 优点: 持久化日志
+★ 缺点: 文件可能很大
+
+10.3 -monitor (监视器)
+格式: -monitor stdio|telnet:port|unix:socket
+
+★ 优点:
+
+交互式控制
+
+实时状态查询
+
+可执行命令
+
+★ 使用示例:
+-monitor stdio
+-monitor telnet:127.0.0.1:4444,server,nowait
+
+10.4 -qmp (QMP协议)
+格式: -qmp unix:socket,server,nowait|tcp:port
+
+★ 优点:
+
+标准管理接口
+
+JSON协议
+
+支持复杂操作
+
+支持事件通知
+
+★ 缺点:
+
+需要编程使用
+
+协议复杂
+
+需要v1.0+
+
+★ 使用示例:
+-qmp unix:/tmp/qmp.sock,server,nowait
+
+10.5 -gdb (GDB调试)
+格式: -gdb tcp::port
+★ 使用: -gdb tcp::1234 -S (启动时暂停)
+
+================================================================================
+十一、安全与沙箱参数
+================================================================================
+
+11.1 -sandbox (沙箱模式)
+格式: -sandbox on[,obsolete=allow][,elevateprivileges=allow|deny][,spawn=allow|deny][,resourcecontrol=allow|deny]
+
+★ 优点:
+
+增强安全性
+
+限制系统调用
+
+防止逃逸
+
+★ 缺点:
+
+某些功能受限
+
+可能需要特权
+
+v3.0+支持
+
+★ 使用: -sandbox on
+
+11.2 -snapshot (快照模式)
+★ 优点:
+
+不持久化写入
+
+测试安全
+
+性能较好
+
+★ 缺点:
+
+数据不保存
+
+关闭后数据丢失
+
+★ 使用: -snapshot
+
+11.3 -drive readonly=on
+★ 优点: 防止磁盘写入
+★ 缺点: 系统可能无法启动
+
+================================================================================
+十二、性能优化参数
+================================================================================
+
+12.1 -mem-prealloc (预分配内存)
+★ 优点: 性能稳定，避免延迟
+★ 缺点: 启动慢，占用内存
+
+12.2 -mem-path (大页内存)
+★ 优点: 性能提升
+★ 缺点: 需要配置，仅Linux
+
+12.3 -numa (NUMA配置)
+格式: -numa node[,memdev=id][,cpus=first[-last]][,nodeid=node]
+
+★ 优点: 优化内存访问
+★ 缺点: 配置复杂
+
+12.4 性能优化建议:
+
+综合优化
+-enable-kvm -cpu host
+-machine q35,accel=kvm
+-drive cache=writeback,aio=threads
+-netdev user,id=net0
+-device virtio-net-pci,netdev=net0
+
+================================================================================
+十三、其他参数
+================================================================================
+
+13.1 -serial (串口)
+格式: -serial device
+常用: stdio, null, pty, file:filename
+
+★ 历史: 所有版本支持
+
+13.2 -parallel (并口)
+格式: -parallel device
+常用: none, pty, file:filename
+
+13.3 -rtc (实时时钟)
+格式: -rtc base=utc|localtime|date,clock=host|rt,driftfix=none|slew
+
+13.4 -seed (随机种子)
+格式: -seed value
+
+13.5 -kernel (内核引导)
+格式: -kernel kernel_file -initrd initrd_file -append "kernel args"
+
+================================================================================
+十四、历史遗留参数详解
+================================================================================
+
+14.1 完全弃用参数列表
+┌──────────────────────┬──────────────────┬──────────────────────────────┐
+│ 参数 │ 弃用版本 │ 替代方案 │
+├──────────────────────┼──────────────────┼──────────────────────────────┤
+│ -enable-kvm │ v2.12+ │ -accel kvm │
+│ -no-kvm │ v2.12+ │ -accel tcg │
+│ -no-kvm-pit │ v2.12+ │ -machine kernel_irqchip=off │
+│ -usbdevice │ v2.5+ │ -device usb-* │
+│ -soundhw │ v3.0+ │ -audiodev + -device │
+│ -net │ v7.0+ │ -netdev │
+│ -hdachs │ v2.0+ │ -drive geometry=... │
+│ -std-vga │ v2.0+ │ -vga std │
+│ -cirrus-vga │ v2.0+ │ -vga cirrus │
+│ -vmware-vga │ v2.0+ │ -vga vmware │
+│ -tb-size │ v2.12+ │ -accel tcg,tb-size=... │
+│ -no-frame │ v2.12+ │ -display gtk,show-cursor=off │
+│ -alt-grab │ v2.12+ │ -display gtk,grab-on-click │
+│ -ctrl-grab │ v2.12+ │ -display gtk,grab-on-click │
+│ -no-quit │ v2.12+ │ -display gtk,quit-on-close=off│
+│ -sdl │ v2.12+ │ -display sdl │
+│ -curses │ v2.12+ │ -display curses │
+│ -win2k-hack │ v2.12+ │ 已移除 │
+│ -no-kvm-pv-eoi │ v4.0+ │ 已移除 │
+└──────────────────────┴──────────────────┴──────────────────────────────┘
+
+14.2 仍在使用的旧参数
+-hda, -hdb, -hdc, -hdd # IDE硬盘（仍广泛使用）
+-cdrom # IDE光驱（仍广泛使用）
+-fda, -fdb # 软盘（仍可用）
+-boot # 启动顺序（所有版本）
+-vnc # VNC（所有版本）
+-monitor # 监视器（所有版本）
+-serial # 串口（所有版本）
+-parallel # 并口（所有版本）
+
+================================================================================
+十五、各版本兼容性对照表
+================================================================================
+
+15.1 参数版本支持
+┌───────────────────────┬──────────┬──────────┬──────────┬──────────┐
+│ 参数 │ v1.x │ v2.x │ v3.x │ v4.x+ │
+├───────────────────────┼──────────┼──────────┼──────────┼──────────┤
+│ -enable-kvm │ ✓ │ ✓ │ ✓ │ ✓(弃用) │
+│ -accel │ ✗ │ ✓ │ ✓ │ ✓ │
+│ -machine │ ✗ │ ✓ │ ✓ │ ✓ │
+│ -M │ ✓ │ ✓(弃用) │ ✗ │ ✗ │
+│ -device │ 有限 │ ✓ │ ✓ │ ✓ │
+│ -netdev │ ✗ │ ✓ │ ✓ │ ✓ │
+│ -net │ ✓ │ ✓ │ ✓(弃用) │ ✗ │
+│ -audiodev │ ✗ │ 实验 │ ✓ │ ✓ │
+│ -soundhw │ ✓ │ ✓ │ ✓(弃用) │ ✗ │
+│ -display │ ✗ │ ✓ │ ✓ │ ✓ │
+│ -sdl │ ✓ │ ✓(弃用) │ ✗ │ ✗ │
+│ -vnc │ ✓ │ ✓ │ ✓ │ ✓ │
+│ -usbdevice │ ✓ │ ✓(弃用) │ ✗ │ ✗ │
+│ -usb │ ✓ │ ✓ │ ✓ │ ✓ │
+│ -sandbox │ ✗ │ ✗ │ ✓ │ ✓ │
+│ -numa │ 有限 │ ✓ │ ✓ │ ✓ │
+└───────────────────────┴──────────┴──────────┴──────────┴──────────┘
+
+================================================================================
+十六、常见报错完整解决方案
+================================================================================
+
+16.1 启动与初始化错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: Could not open '/path/to/file': Permission denied │
+│ 原因: 文件权限不足 │
+│ 解决: chmod 644 file 或使用sudo运行 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: qemu-system-x86_64: -machine: invalid option │
+│ 原因: 旧版本不支持 -machine 语法 │
+│ 解决: 使用 -M 替代（2013年前版本）或升级QEMU │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: qemu-system-x86_64: -accel: invalid option │
+│ 原因: QEMU版本低于2.0 │
+│ 解决: 使用 -enable-kvm 或 -accel tcg │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: qemu-system-x86_64: unsupported machine type │
+│ 原因: 机器类型不存在或拼写错误 │
+│ 解决: qemu-system-x86_64 -M help 查看可用类型 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: qemu-system-x86_64: -cpu: invalid CPU model │
+│ 原因: CPU型号不支持 │
+│ 解决: 使用 qemu64 或 qemu32 作为通用型号 │
+│ qemu-system-x86_64 -cpu help 查看所有型号 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.2 内存相关错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: unable to map backing store for guest RAM │
+│ 原因: 内存不足或KSM冲突 │
+│ 解决: 减少内存分配 (-m 2048)，关闭KSM │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Cannot allocate memory │
+│ 原因: 系统内存不足 │
+│ 解决: 增加swap空间，或关闭其他程序 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: invalid memory size: XXXM │
+│ 原因: 内存大小格式错误 │
+│ 解决: 使用 -m 2048 而非 -m 2048M │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.3 磁盘与存储错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: Could not open disk image │
+│ 原因: 磁盘文件不存在或路径错误 │
+│ 解决: 检查文件路径，使用绝对路径 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Unknown format │
+│ 原因: 不支持的磁盘格式 │
+│ 解决: 使用 qemu-img info 检查格式，使用正确的 format=参数 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Could not open backing file │
+│ 原因: 后端镜像文件丢失 │
+│ 解决: 使用 qemu-img rebase 修复，或找到原始镜像 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Device 'virtio-blk' not found │
+│ 原因: 旧版本不支持 virtio-blk │
+│ 解决: 使用 if=ide 或升级QEMU │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.4 网络错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: Could not open tap device │
+│ 原因: TAP设备权限不足 │
+│ 解决: sudo运行，或添加用户到kvm/tap组 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Invalid hostfwd │
+│ 原因: 端口转发格式错误 │
+│ 解决: 正确格式为 tcp::2222-:22 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Failed to set up host network │
+│ 原因: 宿主机网络配置问题 │
+│ 解决: 检查防火墙，检查网络接口 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.5 显示与图形错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: Display 'gtk' is not available │
+│ 原因: QEMU未编译GTK支持 │
+│ 解决: 使用其他显示后端: -display sdl 或 -nographic │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: cannot initialize opengl │
+│ 原因: OpenGL驱动问题或版本不兼容 │
+│ 解决: 移除 gl=on 参数，更新显卡驱动 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: VNC server bind failed │
+│ 原因: VNC端口被占用 │
+│ 解决: 更换端口: -vnc :1 (5901) │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.6 CPU与KVM错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: KVM not supported by this kernel │
+│ 原因: 内核不支持KVM │
+│ 解决: 使用 -accel tcg 软件模拟 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: KVM: permission denied │
+│ 原因: 用户没有访问KVM的权限 │
+│ 解决: sudo adduser $USER kvm，或使用sudo运行 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: CPU model 'host' not supported │
+│ 原因: QEMU版本不支持 host CPU型号 │
+│ 解决: 使用具体型号如 core2duo │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.7 USB设备错误
+┌─────────────────────────────────────────────────────────────────────────┐
+│ 错误: USB is not supported by this machine │
+│ 原因: 机器类型不支持USB │
+│ 解决: -machine q35,usb=on │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 错误: Could not add USB device 'usb-tablet' │
+│ 原因: USB控制器未初始化 │
+│ 解决: 先添加USB控制器: -device usb-xhci │
+└─────────────────────────────────────────────────────────────────────────┘
+
+16.8 调试通用技巧
+
+查看详细日志
+-D qemu.log -d guest_errors,unimp
+
+交互式调试
+-monitor stdio
+
+查看所有可用设备
+-device help
+
+查看设备属性
+-device driver,help
+
+查看机器类型
+-machine help
+
+================================================================================
+文档结束 - 最后更新: 2026年
+================================================================================
+
